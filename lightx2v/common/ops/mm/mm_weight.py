@@ -6,6 +6,7 @@ from loguru import logger
 from lightx2v.utils.envs import *
 from lightx2v.utils.quant_utils import FloatQuantizer, IntegerQuantizer
 from lightx2v.utils.registry_factory import MM_WEIGHT_REGISTER
+from lightx2v_kernel.gemm import scaled_nvfp4_quant, cutlass_scaled_nvfp4_mm
 
 try:
     from vllm import _custom_ops as ops
@@ -725,6 +726,34 @@ class MMWeightWint4group128Marlin(MMWeightQuantTemplate):
         if hasattr(self, "bias") and self.bias is not None:
             output_tensor.add_(self.bias)
         return output_tensor
+
+
+@MM_WEIGHT_REGISTER("W-fp4-channel-sym-A-fp4-channel-sym-dynamic")
+class MMWeightFp4(MMWeightQuantTemplate):
+    def __init__(self, weight_name, bias_name, lazy_load=False, lazy_load_file=None):
+        super().__init__(weight_name, bias_name, lazy_load, lazy_load_file)
+        self.load_func = self.load_quantized
+        self.act_quant_func = self.act_quant_fp4
+        self.weight_alpha_name = self.weight_name.removesuffix(".weight") + ".weight_alpha"
+
+    def apply(self, input_tensor):
+        input_tensor_quant, input_tensor_scale = self.act_quant_func(input_tensor)
+        output_tensor = cutlass_scaled_nvfp4_mm(input_tensor_quant, self.weight, input_tensor_scale, self.weight_scale, alpha=self.alpha, bias=self.bias)
+        return output_tensor
+
+    def load_quantized(self, weight_dict):
+        self.weight = weight_dict[self.weight_name]
+        self.weight_scale = weight_dict[self.weight_scale_name].to(torch.float8_e4m3fn)
+        self.alpha = weight_dict[self.weight_alpha_name]
+
+        if self.bias_name is not None:
+            self.bias = weight_dict[self.bias_name]
+            self.pinned_bias = torch.empty(self.bias.shape, pin_memory=True, dtype=self.bias.dtype)
+        else:
+            self.bias = None
+
+    def act_quant_fp4(self, x):
+        return scaled_nvfp4_quant(x, self.input_global_scale)
 
 
 if __name__ == "__main__":

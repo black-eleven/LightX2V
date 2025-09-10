@@ -6,13 +6,14 @@ import os
 import re
 import shutil
 from collections import defaultdict
-
 import torch
 from loguru import logger
 from qtorch.quant import float_quantize
 from safetensors import safe_open
 from safetensors import torch as st
 from tqdm import tqdm
+
+from lightx2v_kernel.gemm import scaled_nvfp4_quant
 
 
 def get_key_mapping_rules(direction, model_type):
@@ -341,6 +342,38 @@ def quantize_tensor(w, w_bit=8, dtype=torch.int8):
     return w_q, scales
 
 
+def quantize_tensor_fp4(w, w_bit=4):
+    """
+    Quantize a 2D tensor to specified bit width using symmetric min-max quantization
+
+    Args:
+        w: Input tensor to quantize (must be 2D)
+        w_bit: Quantization bit width (default: 4)
+
+    Returns:
+        quantized: Quantized tensor (int8)
+        scales: Scaling factors per row (float8_e4m3fn)
+        alpha: calibrate x absmax (float32)
+    """
+    if w.dim() != 2:
+        raise ValueError(f"Only 2D tensors supported. Got {w.dim()}D tensor")
+    if torch.isnan(w).any():
+        raise ValueError("Tensor contains NaN values")
+    if w_bit != 4:
+        raise ValueError("Only support 4 bits")
+
+    w = w.cuda().type(torch.bfloat16)
+
+    weight_global_scale = (2688.0 / torch.max(torch.abs(w))).to(torch.float32)
+    w_q, scales = scaled_nvfp4_quant(w, weight_global_scale)
+
+    x_absmax = torch.tensor(5.0, dtype=torch.float32, device=w.device)  # need to be calibrated
+    input_global_scale = (2688.0 / x_absmax).to(torch.float32)
+    alpha = 1.0 / (input_global_scale * weight_global_scale)
+
+    return w_q, scales, alpha
+
+
 def quantize_model(
     weights,
     w_bit=8,
@@ -389,12 +422,19 @@ def quantize_model(
                 continue
 
             try:
-                # Quantize tensor and store results
-                w_q, scales = quantize_tensor(tensor, w_bit, linear_dtype)
-
-                # Replace original tensor and store scales
-                weights[key] = w_q
-                weights[key + "_scale"] = scales
+                if linear_dtype == torch.float8_e4m3fn and w_bit == 4:
+                    # Quantize tensor and store results
+                    w_q, scales, alpha = quantize_tensor_fp4(tensor, w_bit)
+                    # Replace original tensor and store scales
+                    weights[key] = w_q
+                    weights[key + "_scale"] = scales
+                    weights[key + "_alpha"] = alpha
+                else:
+                    # Quantize tensor and store results
+                    w_q, scales = quantize_tensor(tensor, w_bit, linear_dtype)
+                    # Replace original tensor and store scales
+                    weights[key] = w_q
+                    weights[key + "_scale"] = scales
 
                 total_quantized += 1
                 total_size += tensor.numel() * tensor.element_size() / (1024**2)  # MB
@@ -643,7 +683,7 @@ def main():
 
     # Quantization
     parser.add_argument("--quantized", action="store_true")
-    parser.add_argument("--bits", type=int, default=8, choices=[8], help="Quantization bit width")
+    parser.add_argument("--bits", type=int, default=8, choices=[4, 8], help="Quantization bit width")
     parser.add_argument(
         "--device",
         type=str,
