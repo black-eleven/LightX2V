@@ -202,7 +202,7 @@ class GGMLTensor(torch.Tensor):
             dtype: 数据类型
             aligned: 是否内存对齐
         """
-        return cls(shape=shape, dtype=dtype, pin_memory=True, aligned=aligned, preallocated=True)
+        return cls(tensor_shape=shape, dtype=dtype, pin_memory=True, aligned=aligned, preallocated=True)
     
     @classmethod
     def empty_aligned(cls,
