@@ -1,0 +1,492 @@
+# -*-coding=utf-8-*-
+import torch
+
+# TODO
+from loguru import logger
+import warnings
+
+try:
+    import gguf
+except ImportError:
+    gguf = None
+
+
+TORCH_COMPATIBLE_QTYPES = (None, gguf.GGMLQuantizationType.F32, gguf.GGMLQuantizationType.F16)
+
+def is_torch_compatible(tensor):
+    return tensor is None or getattr(tensor, "tensor_type", None) in TORCH_COMPATIBLE_QTYPES
+
+
+def is_quantized(tensor):
+    return not is_torch_compatible(tensor)
+
+
+def dequantize_tensor(tensor, dtype=None, dequant_dtype=None):
+    qtype = getattr(tensor, "tensor_type", None)
+    oshape = getattr(tensor, "tensor_shape", tensor.shape)
+
+    if qtype in TORCH_COMPATIBLE_QTYPES:
+        return tensor.to(dtype)
+    elif qtype in dequantize_functions:
+        dequant_dtype = dtype if dequant_dtype == "target" else dequant_dtype
+        return dequantize(tensor.data, qtype, oshape, dtype=dequant_dtype).to(dtype)
+    else:
+        # this is incredibly slow
+        tqdm.write(f"Falling back to numpy dequant for qtype: {qtype}")
+        new = gguf.quants.dequantize(tensor.cpu().numpy(), qtype)
+        return torch.from_numpy(new).to(tensor.device, dtype=dtype)
+
+def dequantize(data, qtype, oshape, dtype=None):
+    """
+    Dequantize tensor back to usable shape/dtype
+    """
+    block_size, type_size = gguf.GGML_QUANT_SIZES[qtype]
+    dequantize_blocks = dequantize_functions[qtype]
+
+    rows = data.reshape(
+        (-1, data.shape[-1])
+    ).view(torch.uint8)
+
+    n_blocks = rows.numel() // type_size
+    blocks = rows.reshape((n_blocks, type_size))
+    blocks = dequantize_blocks(blocks, block_size, type_size, dtype)
+    return blocks.reshape(oshape)
+
+
+def to_uint32(x):
+    # no uint32 :(
+    x = x.view(torch.uint8).to(torch.int32)
+    return (x[:, 0] | x[:, 1] << 8 | x[:, 2] << 16 | x[:, 3] << 24).unsqueeze(1)
+
+def split_block_dims(blocks, *args):
+    n_max = blocks.shape[1]
+    dims = list(args) + [n_max - sum(args)]
+    return torch.split(blocks, dims, dim=1)
+
+# Full weights #
+def dequantize_blocks_BF16(blocks, block_size, type_size, dtype=None):
+    return (blocks.view(torch.int16).to(torch.int32) << 16).view(torch.float32)
+
+# Legacy Quants #
+def dequantize_blocks_Q8_0(blocks, block_size, type_size, dtype=None):
+    d, x = split_block_dims(blocks, 2)
+    d = d.view(torch.float16).to(dtype)
+    x = x.view(torch.int8)
+    return (d * x)
+
+def dequantize_blocks_Q5_1(blocks, block_size, type_size, dtype=None):
+    n_blocks = blocks.shape[0]
+
+    d, m, qh, qs = split_block_dims(blocks, 2, 2, 4)
+    d = d.view(torch.float16).to(dtype)
+    m = m.view(torch.float16).to(dtype)
+    qh = to_uint32(qh)
+
+    qh = qh.reshape((n_blocks, 1)) >> torch.arange(32, device=d.device, dtype=torch.int32).reshape(1, 32)
+    ql = qs.reshape((n_blocks, -1, 1, block_size // 2)) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape(1, 1, 2, 1)
+    qh = (qh & 1).to(torch.uint8)
+    ql = (ql & 0x0F).reshape((n_blocks, -1))
+
+    qs = (ql | (qh << 4))
+    return (d * qs) + m
+
+def dequantize_blocks_Q5_0(blocks, block_size, type_size, dtype=None):
+    n_blocks = blocks.shape[0]
+
+    d, qh, qs = split_block_dims(blocks, 2, 4)
+    d  = d.view(torch.float16).to(dtype)
+    qh = to_uint32(qh)
+
+    qh = qh.reshape(n_blocks, 1) >> torch.arange(32, device=d.device, dtype=torch.int32).reshape(1, 32)
+    ql = qs.reshape(n_blocks, -1, 1, block_size // 2) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape(1, 1, 2, 1)
+
+    qh = (qh & 1).to(torch.uint8)
+    ql = (ql & 0x0F).reshape(n_blocks, -1)
+
+    qs = (ql | (qh << 4)).to(torch.int8) - 16
+    return (d * qs)
+
+def dequantize_blocks_Q4_1(blocks, block_size, type_size, dtype=None):
+    n_blocks = blocks.shape[0]
+
+    d, m, qs = split_block_dims(blocks, 2, 2)
+    d = d.view(torch.float16).to(dtype)
+    m = m.view(torch.float16).to(dtype)
+
+    qs = qs.reshape((n_blocks, -1, 1, block_size // 2)) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape(1, 1, 2, 1)
+    qs = (qs & 0x0F).reshape(n_blocks, -1)
+
+    return (d * qs) + m
+
+def dequantize_blocks_Q4_0(blocks, block_size, type_size, dtype=None):
+    n_blocks = blocks.shape[0]
+
+    d, qs = split_block_dims(blocks, 2)
+    d  = d.view(torch.float16).to(dtype)
+
+    qs = qs.reshape((n_blocks, -1, 1, block_size // 2)) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape((1, 1, 2, 1))
+    qs = (qs & 0x0F).reshape((n_blocks, -1)).to(torch.int8) - 8
+    return (d * qs)
+
+# K Quants #
+QK_K = 256
+K_SCALE_SIZE = 12
+
+def get_scale_min(scales):
+    n_blocks = scales.shape[0]
+    scales = scales.view(torch.uint8)
+    scales = scales.reshape((n_blocks, 3, 4))
+
+    d, m, m_d = torch.split(scales, scales.shape[-2] // 3, dim=-2)
+
+    sc = torch.cat([d & 0x3F, (m_d & 0x0F) | ((d >> 2) & 0x30)], dim=-1)
+    min = torch.cat([m & 0x3F, (m_d >> 4) | ((m >> 2) & 0x30)], dim=-1)
+
+    return (sc.reshape((n_blocks, 8)), min.reshape((n_blocks, 8)))
+
+def dequantize_blocks_Q6_K(blocks, block_size, type_size, dtype=None):
+    n_blocks = blocks.shape[0]
+
+    ql, qh, scales, d, = split_block_dims(blocks, QK_K // 2, QK_K // 4, QK_K // 16)
+
+    scales = scales.view(torch.int8).to(dtype)
+    d = d.view(torch.float16).to(dtype)
+    d = (d * scales).reshape((n_blocks, QK_K // 16, 1))
+
+    ql = ql.reshape((n_blocks, -1, 1, 64)) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape((1, 1, 2, 1))
+    ql = (ql & 0x0F).reshape((n_blocks, -1, 32))
+    qh = qh.reshape((n_blocks, -1, 1, 32)) >> torch.tensor([0, 2, 4, 6], device=d.device, dtype=torch.uint8).reshape((1, 1, 4, 1))
+    qh = (qh & 0x03).reshape((n_blocks, -1, 32))
+    q = (ql | (qh << 4)).to(torch.int8) - 32
+    q = q.reshape((n_blocks, QK_K // 16, -1))
+
+    return (d * q).reshape((n_blocks, QK_K))
+
+def dequantize_blocks_Q5_K(blocks, block_size, type_size, dtype=None):
+    n_blocks = blocks.shape[0]
+
+    d, dmin, scales, qh, qs = split_block_dims(blocks, 2, 2, K_SCALE_SIZE, QK_K // 8)
+
+    d = d.view(torch.float16).to(dtype)
+    dmin = dmin.view(torch.float16).to(dtype)
+
+    sc, m = get_scale_min(scales)
+
+    d = (d * sc).reshape((n_blocks, -1, 1))
+    dm = (dmin * m).reshape((n_blocks, -1, 1))
+
+    ql = qs.reshape((n_blocks, -1, 1, 32)) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape((1, 1, 2, 1))
+    qh = qh.reshape((n_blocks, -1, 1, 32)) >> torch.tensor([i for i in range(8)], device=d.device, dtype=torch.uint8).reshape((1, 1, 8, 1))
+    ql = (ql & 0x0F).reshape((n_blocks, -1, 32))
+    qh = (qh & 0x01).reshape((n_blocks, -1, 32))
+    q = (ql | (qh << 4))
+
+    return (d * q - dm).reshape((n_blocks, QK_K))
+
+def dequantize_blocks_Q4_K(blocks, block_size, type_size, dtype=None):
+    n_blocks = blocks.shape[0]
+
+    d, dmin, scales, qs = split_block_dims(blocks, 2, 2, K_SCALE_SIZE)
+    d = d.view(torch.float16).to(dtype)
+    dmin = dmin.view(torch.float16).to(dtype)
+
+    sc, m = get_scale_min(scales)
+
+    d = (d * sc).reshape((n_blocks, -1, 1))
+    dm = (dmin * m).reshape((n_blocks, -1, 1))
+
+    qs = qs.reshape((n_blocks, -1, 1, 32)) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape((1, 1, 2, 1))
+    qs = (qs & 0x0F).reshape((n_blocks, -1, 32))
+
+    return (d * qs - dm).reshape((n_blocks, QK_K))
+
+def dequantize_blocks_Q3_K(blocks, block_size, type_size, dtype=None):
+    n_blocks = blocks.shape[0]
+
+    hmask, qs, scales, d = split_block_dims(blocks, QK_K // 8, QK_K // 4, 12)
+    d = d.view(torch.float16).to(dtype)
+
+    lscales, hscales = scales[:, :8], scales[:, 8:]
+    lscales = lscales.reshape((n_blocks, 1, 8)) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape((1, 2, 1))
+    lscales = lscales.reshape((n_blocks, 16))
+    hscales = hscales.reshape((n_blocks, 1, 4)) >> torch.tensor([0, 2, 4, 6], device=d.device, dtype=torch.uint8).reshape((1, 4, 1))
+    hscales = hscales.reshape((n_blocks, 16))
+    scales = (lscales & 0x0F) | ((hscales & 0x03) << 4)
+    scales = (scales.to(torch.int8) - 32)
+
+    dl = (d * scales).reshape((n_blocks, 16, 1))
+
+    ql = qs.reshape((n_blocks, -1, 1, 32)) >> torch.tensor([0, 2, 4, 6], device=d.device, dtype=torch.uint8).reshape((1, 1, 4, 1))
+    qh = hmask.reshape(n_blocks, -1, 1, 32) >> torch.tensor([i for i in range(8)], device=d.device, dtype=torch.uint8).reshape((1, 1, 8, 1))
+    ql = ql.reshape((n_blocks, 16, QK_K // 16)) & 3
+    qh = (qh.reshape((n_blocks, 16, QK_K // 16)) & 1) ^ 1
+    q = (ql.to(torch.int8) - (qh << 2).to(torch.int8))
+
+    return (dl * q).reshape((n_blocks, QK_K))
+
+def dequantize_blocks_Q2_K(blocks, block_size, type_size, dtype=None):
+    n_blocks = blocks.shape[0]
+
+    scales, qs, d, dmin = split_block_dims(blocks, QK_K // 16, QK_K // 4, 2)
+    d = d.view(torch.float16).to(dtype)
+    dmin = dmin.view(torch.float16).to(dtype)
+
+    # (n_blocks, 16, 1)
+    dl = (d * (scales & 0xF)).reshape((n_blocks, QK_K // 16, 1))
+    ml = (dmin * (scales >> 4)).reshape((n_blocks, QK_K // 16, 1))
+
+    shift = torch.tensor([0, 2, 4, 6], device=d.device, dtype=torch.uint8).reshape((1, 1, 4, 1))
+
+    qs = (qs.reshape((n_blocks, -1, 1, 32)) >> shift) & 3
+    qs = qs.reshape((n_blocks, QK_K // 16, 16))
+    qs = dl * qs - ml
+
+    return qs.reshape((n_blocks, -1))
+
+
+dequantize_functions = {
+    gguf.GGMLQuantizationType.BF16: dequantize_blocks_BF16,
+    gguf.GGMLQuantizationType.Q8_0: dequantize_blocks_Q8_0,
+    gguf.GGMLQuantizationType.Q5_1: dequantize_blocks_Q5_1,
+    gguf.GGMLQuantizationType.Q5_0: dequantize_blocks_Q5_0,
+    gguf.GGMLQuantizationType.Q4_1: dequantize_blocks_Q4_1,
+    gguf.GGMLQuantizationType.Q4_0: dequantize_blocks_Q4_0,
+    gguf.GGMLQuantizationType.Q6_K: dequantize_blocks_Q6_K,
+    gguf.GGMLQuantizationType.Q5_K: dequantize_blocks_Q5_K,
+    gguf.GGMLQuantizationType.Q4_K: dequantize_blocks_Q4_K,
+    gguf.GGMLQuantizationType.Q3_K: dequantize_blocks_Q3_K,
+    gguf.GGMLQuantizationType.Q2_K: dequantize_blocks_Q2_K,
+}
+
+def get_field(reader, field_name, field_type):
+    field = reader.get_field(field_name)
+    if field is None:
+        return None
+    elif field_type == str:
+        # extra check here as this is used for checking arch string
+        if len(field.types) != 1 or field.types[0] != gguf.GGUFValueType.STRING:
+            raise TypeError(f"Bad type for GGUF {field_name} key: expected string, got {field.types!r}")
+        return str(field.parts[field.data[-1]], encoding="utf-8")
+    elif field_type in [int, float, bool]:
+        return field_type(field.parts[field.data[-1]])
+    else:
+        raise TypeError(f"Unknown field type {field_type}")
+
+
+def get_list_field(reader, field_name, field_type):
+    field = reader.get_field(field_name)
+    if field is None:
+        return None
+    elif field_type == str:
+        return tuple(str(field.parts[part_idx], encoding="utf-8") for part_idx in field.data)
+    elif field_type in [int, float, bool]:
+        return tuple(field_type(field.parts[part_idx][0]) for part_idx in field.data)
+    else:
+        raise TypeError(f"Unknown field type {field_type}")
+
+
+class GGMLTensor(torch.Tensor):
+    """ 
+    Main tensor-like class for storing quantized weights
+    """
+    def __init__(self, *args, tensor_type, tensor_shape, patches=[], **kwargs):
+        super().__init__()
+        self.tensor_type = tensor_type
+        self.tensor_shape = tensor_shape
+        self.patches = patches
+
+    def __new__(cls, *args, tensor_type, tensor_shape, patches=[], **kwargs):
+        return super().__new__(cls, *args, **kwargs)
+
+    def to(self, *args, **kwargs):
+        new = super().to(*args, **kwargs)
+        new.tensor_type = getattr(self, "tensor_type", None)
+        new.tensor_shape = getattr(self, "tensor_shape", new.data.shape)
+        new.patches = getattr(self, "patches", []).copy()
+        return new
+
+    def clone(self, *args, **kwargs):
+        return self
+
+    def detach(self, *args, **kwargs):
+        return self
+
+    def copy_(self, *args, **kwargs):
+        # fixes .weight.copy_ in comfy/clip_model/CLIPTextModel
+        try:
+            return super().copy_(*args, **kwargs)
+        except Exception as e:
+            logger.warning(f"ignoring 'copy_' on tensor: {e}")
+
+    def new_empty(self, size, *args, **kwargs):
+        # Intel Arc fix, ref#50
+        new_tensor = super().new_empty(size, *args, **kwargs)
+        return GGMLTensor(
+                new_tensor,
+                tensor_type = getattr(self, "tensor_type", None),
+                tensor_shape = size,
+                patches = getattr(self, "patches", []).copy()
+        )
+
+    @property
+    def shape(self):
+        if not hasattr(self, "tensor_shape"):
+            self.tensor_shape = self.size()
+        return self.tensor_shape
+
+
+def get_orig_shape(reader, tensor_name):
+    field_key = f"comfy.gguf.orig_shape.{tensor_name}"
+    field = reader.get_field(field_key)
+    if field is None:
+        return None
+    # Has original shape metadata, so we try to decode it.
+    if len(field.types) != 2 or field.types[0] != gguf.GGUFValueType.ARRAY or field.types[1] != gguf.GGUFValueType.INT32:
+        raise TypeError(f"Bad original shape metadata for {field_key}: Expected ARRAY of INT32, got {field.types}")
+    return torch.Size(tuple(int(field.parts[part_idx][0]) for part_idx in field.data))
+
+
+def gguf_tokenizer_loader(path, temb_shape):
+    # convert gguf tokenizer to spiece
+    logger.info("Attempting to recreate sentencepiece tokenizer from GGUF file metadata...")
+    try:
+        from sentencepiece import sentencepiece_model_pb2 as model
+    except ImportError:
+        raise ImportError("Please make sure sentencepiece and protobuf are installed.\npip install sentencepiece protobuf")
+    spm = model.ModelProto()
+
+    reader = gguf.GGUFReader(path)
+
+    if get_field(reader, "tokenizer.ggml.model", str) == "t5":
+        if temb_shape == (256384, 4096): # probably UMT5
+            spm.trainer_spec.model_type == 1 # Unigram (do we have a T5 w/ BPE?)
+        else:
+            raise NotImplementedError("Unknown model, can't set tokenizer!")
+    else:
+        raise NotImplementedError("Unknown model, can't set tokenizer!")
+
+    spm.normalizer_spec.add_dummy_prefix = get_field(reader, "tokenizer.ggml.add_space_prefix", bool)
+    spm.normalizer_spec.remove_extra_whitespaces = get_field(reader, "tokenizer.ggml.remove_extra_whitespaces", bool)
+
+    tokens = get_list_field(reader, "tokenizer.ggml.tokens", str)
+    scores = get_list_field(reader, "tokenizer.ggml.scores", float)
+    toktypes = get_list_field(reader, "tokenizer.ggml.token_type", int)
+
+    for idx, (token, score, toktype) in enumerate(zip(tokens, scores, toktypes)):
+        # # These aren't present in the original?
+        # if toktype == 5 and idx >= temb_shape[0]%1000):
+        #     continue
+
+        piece = spm.SentencePiece()
+        piece.piece = token
+        piece.score = score
+        piece.type = toktype
+        spm.pieces.append(piece)
+
+    # unsure if any of these are correct
+    spm.trainer_spec.byte_fallback = True
+    spm.trainer_spec.vocab_size = len(tokens) # split off unused?
+    spm.trainer_spec.max_sentence_length = 4096
+    spm.trainer_spec.eos_id = get_field(reader, "tokenizer.ggml.eos_token_id", int)
+    spm.trainer_spec.pad_id = get_field(reader, "tokenizer.ggml.padding_token_id", int)
+
+    logger.info(f"Created tokenizer with vocab size of {len(spm.pieces)}")
+    del reader
+    return torch.ByteTensor(list(spm.SerializeToString()))
+
+
+def load_gguf_sd_ckpt(gguf_path, return_arch=False):
+    logger.info(f"Loading gguf-quant dit model from {gguf_path}")
+
+    reader = gguf.GGUFReader(gguf_path)
+    state_dict = {}
+    qtype_dict = {}
+    for tensor in reader.tensors:
+        tensor_name = tensor.name
+        # torch_tensor = torch.from_numpy(tensor.data) # mmap
+
+        # NOTE: line above replaced with this block to avoid persistent numpy warning about mmap
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="The given NumPy array is not writable")
+            torch_tensor = torch.from_numpy(tensor.data) # mmap
+
+        shape = get_orig_shape(reader, tensor_name)
+        if shape is None:
+            shape = torch.Size(tuple(int(v) for v in reversed(tensor.shape)))
+
+        # add to state dict
+        if tensor.tensor_type in {gguf.GGMLQuantizationType.F32, gguf.GGMLQuantizationType.F16}:
+            torch_tensor = torch_tensor.view(*shape)
+        state_dict[tensor.name] = GGMLTensor(torch_tensor, tensor_type=tensor.tensor_type, tensor_shape=shape)
+
+        # keep track of loaded tensor types
+        tensor_type_str = getattr(tensor.tensor_type, "name", repr(tensor.tensor_type))
+        qtype_dict[tensor_type_str] = qtype_dict.get(tensor_type_str, 0) + 1
+
+    # mark largest tensor for vram estimation
+    qsd = {k:v for k,v in state_dict.items() if is_quantized(v)}
+    if len(qsd) > 0:
+        max_key = max(qsd.keys(), key=lambda k: qsd[k].numel())
+        state_dict[max_key].is_largest_weight = True
+
+    if return_arch:
+        arch_str = get_field(reader, "general.architecture", str)
+        return (state_dict, arch_str)
+    return state_dict
+
+
+def sd_map_replace(raw_sd, key_map):
+    sd = {}
+    for k,v in raw_sd.items():
+        print(k)
+        for s,d in key_map.items():
+            k = k.replace(s,d)
+        print(k)
+        sd[k] = v
+    return sd
+
+
+# for remapping llama.cpp -> original key names
+# TODO 转模型的时候就把这些key对应好
+T5_SD_MAP = {
+    "enc.blk": "blocks",
+    "token_embd": "token_embedding",
+    "enc.output_norm": "norm",
+    "attn_norm": "norm1",
+    "attn_q": "attn.q",
+    "attn_k": "attn.k",
+    "attn_v": "attn.v",
+    "attn_o": "attn.o",
+    "attn_rel_b": "pos_embedding.embedding",
+    "ffn_up": "ffn.fc1",
+    "ffn_down": "ffn.fc2",
+    "ffn_gate": "ffn.gate.0",
+    "ffn_norm": "norm2",
+
+    # "attn_q": "layer.0.SelfAttention.q",
+    # "attn_k": "layer.0.SelfAttention.k",
+    # "attn_v": "layer.0.SelfAttention.v",
+    # "attn_o": "layer.0.SelfAttention.o",
+    # "attn_norm": "layer.0.norm1",
+    # "attn_rel_b": "layer.0.SelfAttention.relative_attention_bias",
+    # "ffn_up": "layer.1.DenseReluDense.wi_1",
+    # "ffn_down": "layer.1.DenseReluDense.wo",
+    # "ffn_gate": "layer.1.DenseReluDense.wi_0",
+    # "ffn_norm": "layer.1.norm2",
+}
+
+
+def load_gguf_clip_ckpt(path):
+    sd, arch = load_gguf_sd_ckpt(path, return_arch=True)
+    if arch in {"t5", "t5encoder"}:
+        temb_key = "token_embd.weight"
+        if temb_key in sd and sd[temb_key].shape == (256384, 4096):
+            # non-standard Comfy-Org tokenizer
+            # sd["spiece_model"] = gguf_tokenizer_loader(path, sd[temb_key].shape)
+            # TODO: dequantizing token embed here is janky but otherwise we OOM due to tensor being massive.
+            logger.warning(f"Dequantizing {temb_key} to prevent runtime OOM.")
+            sd[temb_key] = dequantize_tensor(sd[temb_key], dtype=torch.float16)
+        sd = sd_map_replace(sd, T5_SD_MAP)
+    else:
+        pass
+    return sd
