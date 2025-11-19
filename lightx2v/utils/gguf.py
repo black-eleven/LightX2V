@@ -185,6 +185,109 @@ class GGMLTensor(torch.Tensor):
         # 实际实现需要根据GGUF的Q8_0格式解析
         return torch.randn(self._orig_shape, dtype=torch.float32)
     
+    @classmethod
+    def empty_pinned(cls, 
+                    shape: Tuple[int, ...], 
+                    dtype: torch.dtype = torch.float32,
+                    aligned: bool = True) -> 'GGMLTensor':
+        """
+        创建预分配的固定内存张量
+        
+        Args:
+            shape: 张量形状
+            dtype: 数据类型
+            aligned: 是否内存对齐
+        """
+        return cls(shape=shape, dtype=dtype, pin_memory=True, aligned=aligned, preallocated=True)
+    
+    @classmethod
+    def empty_aligned(cls,
+                     shape: Tuple[int, ...],
+                     dtype: torch.dtype = torch.float32,
+                     pin_memory: bool = False) -> 'GGMLTensor':
+        """
+        创建预分配的对齐内存张量
+        
+        Args:
+            shape: 张量形状
+            dtype: 数据类型
+            pin_memory: 是否固定内存
+        """
+        return cls(shape=shape, dtype=dtype, pin_memory=pin_memory, aligned=True, preallocated=True)
+    
+    def copy_from(self, 
+                 source: Union[torch.Tensor, 'GGMLTensor'],
+                 transpose: bool = False,
+                 non_blocking: bool = False) -> 'GGMLTensor':
+        """
+        从源张量复制数据到当前张量
+        
+        Args:
+            source: 源张量
+            transpose: 是否转置源数据
+            non_blocking: 是否非阻塞复制
+        """
+        if not self._preallocated:
+            raise RuntimeError("copy_from can only be used with preallocated tensors")
+        
+        # 获取源数据
+        if transpose:
+            source_data = source.t().contiguous()
+        else:
+            source_data = source.contiguous()
+        
+        # 检查形状是否匹配
+        if self.shape != source_data.shape:
+            raise ValueError(f"Shape mismatch: target {self.shape} vs source {source_data.shape}")
+        
+        # 执行复制
+        self.copy_(source_data)
+        
+        return self
+    
+    def copy_from_dict(self,
+                      weight_dict: Dict[str, torch.Tensor],
+                      weight_name: str,
+                      transpose: bool = False,
+                      non_blocking: bool = False) -> 'GGMLTensor':
+        """
+        从权重字典中复制指定名称的权重
+        
+        Args:
+            weight_dict: 权重字典
+            weight_name: 权重名称
+            transpose: 是否转置权重
+            non_blocking: 是否非阻塞复制
+        """
+        if weight_name not in weight_dict:
+            raise KeyError(f"Weight '{weight_name}' not found in weight dictionary")
+        
+        source_weight = weight_dict[weight_name]
+        return self.copy_from(source_weight, transpose=transpose, non_blocking=non_blocking)
+    
+    def copy_to(self, 
+               target: Union[torch.Tensor, 'GGMLTensor'],
+               transpose: bool = False,
+               non_blocking: bool = False) -> 'GGMLTensor':
+        """
+        复制当前张量数据到目标张量
+        
+        Args:
+            target: 目标张量
+            transpose: 是否转置数据
+            non_blocking: 是否非阻塞复制
+        """
+        source_data = self
+        if transpose:
+            source_data = self.t().contiguous()
+        
+        if isinstance(target, GGMLTensor):
+            target.copy_from(source_data, non_blocking=non_blocking)
+        else:
+            target.copy_(source_data)
+        
+        return self
+
     def _make_aligned(self, alignment: int = 32):
         """确保张量数据内存对齐"""
         if not self.is_contiguous():
