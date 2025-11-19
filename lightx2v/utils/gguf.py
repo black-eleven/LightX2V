@@ -18,7 +18,9 @@ class GGMLTensor(torch.Tensor):
                 dtype: torch.dtype = None,
                 requires_grad: bool = False,
                 aligned: bool = True,
-                pin_memory: bool = False):
+                pin_memory: bool = False,
+                preallocated: bool = False,
+                ):
         """
         专门为GGUF加载设计的构造函数
         
@@ -30,6 +32,7 @@ class GGMLTensor(torch.Tensor):
             requires_grad: 是否需要梯度
             aligned: 是否内存对齐
             pin_memory: 是否固定内存
+            preallocated: 是否预分配内存
         """
         # 处理NumPy数组
         if isinstance(data, np.ndarray):
