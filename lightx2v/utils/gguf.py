@@ -438,3 +438,42 @@ def get_model_architecture(reader) -> str:
     """从GGUF读取器获取模型架构信息"""
     # 实现获取模型架构的逻辑
     return "unknown"
+
+# for remapping llama.cpp -> original key names
+# TODO 转模型的时候就把这些key对应好
+T5_SD_MAP = {
+    "enc.blk": "blocks",
+    "token_embd": "token_embedding",
+    "enc.output_norm": "norm",
+    "attn_norm": "norm1",
+    "attn_q": "attn.q",
+    "attn_k": "attn.k",
+    "attn_v": "attn.v",
+    "attn_o": "attn.o",
+    "attn_rel_b": "pos_embedding.embedding",
+    "ffn_up": "ffn.fc1",
+    "ffn_down": "ffn.fc2",
+    "ffn_gate": "ffn.gate.0",
+    "ffn_norm": "norm2",
+
+    # "attn_q": "layer.0.SelfAttention.q",
+    # "attn_k": "layer.0.SelfAttention.k",
+    # "attn_v": "layer.0.SelfAttention.v",
+    # "attn_o": "layer.0.SelfAttention.o",
+    # "attn_norm": "layer.0.norm1",
+    # "attn_rel_b": "layer.0.SelfAttention.relative_attention_bias",
+    # "ffn_up": "layer.1.DenseReluDense.wi_1",
+    # "ffn_down": "layer.1.DenseReluDense.wo",
+    # "ffn_gate": "layer.1.DenseReluDense.wi_0",
+    # "ffn_norm": "layer.1.norm2",
+}
+
+
+def load_gguf_clip_ckpt(path):
+    sd, arch = load_gguf_sd_ckpt(path, return_arch=True)
+    if arch in {"t5", "t5encoder"}:
+        temb_key = "token_embd.weight"
+        sd = sd_map_replace(sd, T5_SD_MAP)
+    else:
+        pass
+    return sd
