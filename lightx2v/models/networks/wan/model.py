@@ -33,11 +33,7 @@ from lightx2v.models.networks.wan.weights.transformer_weights import (
 from lightx2v.utils.custom_compiler import CompiledMethodsMixin, compiled_method
 from lightx2v.utils.envs import *
 from lightx2v.utils.utils import *
-
-try:
-    import gguf
-except ImportError:
-    gguf = None
+from lightx2v.utils.gguf import load_gguf_sd_ckpt
 
 
 class WanModel(CompiledMethodsMixin):
@@ -74,6 +70,7 @@ class WanModel(CompiledMethodsMixin):
                 "mxfp4",
                 "mxfp6-mxfp8",
                 "mxfp8",
+                "gguf-Q4_K_S",
             ]
         self.device = device
         self._init_infer_class()
@@ -239,12 +236,11 @@ class WanModel(CompiledMethodsMixin):
         return pre_post_weight_dict
 
     def _load_gguf_ckpt(self):
-        gguf_path = self.dit_quantized_ckpt
-        logger.info(f"Loading gguf-quant dit model from {gguf_path}")
-        reader = gguf.GGUFReader(gguf_path)
-        for tensor in reader.tensors:
-            # TODO: implement _load_gguf_ckpt
-            pass
+        gguf_path = self.config["dit_quantized_ckpt"]
+        state_dict = load_gguf_sd_ckpt(gguf_path)
+        print(state_dict)
+        return state_dict
+
 
     def _init_weights(self, weight_dict=None):
         unified_dtype = GET_DTYPE() == GET_SENSITIVE_DTYPE()
@@ -268,10 +264,13 @@ class WanModel(CompiledMethodsMixin):
                     weight_dict = self._load_ckpt(unified_dtype, sensitive_layer)
                 else:
                     # Load quantized weights
-                    if not self.config.get("lazy_load", False):
+                    if "gguf" in self.config.get("dit_quant_scheme", ""):
+                        weight_dict = self._load_gguf_ckpt()
+                    elif not self.config.get("lazy_load", False):
                         weight_dict = self._load_quant_ckpt(unified_dtype, sensitive_layer)
                     else:
                         weight_dict = self._load_quant_split_ckpt(unified_dtype, sensitive_layer)
+
 
             if self.config.get("device_mesh") is not None and self.config.get("load_from_rank0", False):
                 weight_dict = self._load_weights_from_rank0(weight_dict, is_weight_loader)

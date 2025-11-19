@@ -1,0 +1,18 @@
+{
+    "infer_steps": 40,
+    "target_video_length": 81,
+    "target_height": 480,
+    "target_width": 832,
+    "self_attn_1_type": "sage_attn2",
+    "cross_attn_1_type": "sage_attn2",
+    "cross_attn_2_type": "sage_attn2",
+    "sample_guide_scale": 5,
+    "sample_shift": 5,
+    "enable_cfg": true,
+    "t5_quantized": true,
+    "t5_quant_scheme": "gguf-Q4_K_S",
+    "cpu_offload": true,
+    "dit_quantized_ckpt": "/home/SENSETIME/yihuiwen/yihuiwen/workspace/models/city96/Wan2.1-I2V-14B-720P-gguf/wan2.1-i2v-14b-720p-Q4_K_S.gguf",
+    "dit_quantized": true,
+    "dit_quant_scheme": "gguf-Q4_K_S"
+}

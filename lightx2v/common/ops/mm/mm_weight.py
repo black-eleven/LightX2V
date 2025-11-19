@@ -998,16 +998,90 @@ class MMWeightGGUFTemplate(MMWeightQuantTemplate):
 
     def __init__(self, weight_name, bias_name, lazy_load=False, lazy_load_file=None):
         super().__init__(weight_name, bias_name, lazy_load, lazy_load_file)
+        self.load_func = self.load_gguf
 
-    def dequantize_func(self):
+    def load_gguf(self, weight_dict):
+        self.weight = weight_dict[self.weight_name]
+        if self.bias_name is not None:
+            self.bias = weight_dict[self.bias_name]
+        else:
+            self.bias = None
+
+    def apply(self, input_tensor):
+        print(self.weight)
+        print(self.bias)
+        print(input_tensor)
+        return input_tensor
+
+
+    def dequantize_func(self, input_tensor):
         # TODO: implement dequantize_func
+        qtype = getattr(tensor, "tensor_type", None)
+        oshape = getattr(tensor, "tensor_shape", tensor.shape)
         pass
 
 
-@MM_WEIGHT_REGISTER("W-gguf-Q4_K")
+@MM_WEIGHT_REGISTER("gguf-BF16")
+class MMWeightGGUFBF16(MMWeightGGUFTemplate):
+    qtype = gguf.GGMLQuantizationType.BF16
+
+
+@MM_WEIGHT_REGISTER("gguf-Q8_0")
+class MMWeightGGUFQ80(MMWeightGGUFTemplate):
+    qtype = gguf.GGMLQuantizationType.Q8_0
+
+
+@MM_WEIGHT_REGISTER("gguf-Q6_K")
+class MMWeightGGUFQ6K(MMWeightGGUFTemplate):
+    qtype = gguf.GGMLQuantizationType.Q6_K
+
+
+@MM_WEIGHT_REGISTER("gguf-Q5_K")
+class MMWeightGGUFQ80(MMWeightGGUFTemplate):
+    qtype = gguf.GGMLQuantizationType.Q6_K
+
+
+@MM_WEIGHT_REGISTER("gguf-Q5_1")
+class MMWeightGGUFQ51(MMWeightGGUFTemplate):
+    qtype = gguf.GGMLQuantizationType.Q5_1
+
+
+@MM_WEIGHT_REGISTER("gguf-Q5_0")
+class MMWeightGGUFBF16(MMWeightGGUFTemplate):
+    qtype = gguf.GGMLQuantizationType.Q5_0
+
+
+@MM_WEIGHT_REGISTER("gguf-Q4_K")
 class MMWeightGGUFQ4K(MMWeightGGUFTemplate):
+    qtype = gguf.GGMLQuantizationType.Q4_K
     def __init__(self, weight_name, bias_name, lazy_load=False, lazy_load_file=None):
         super().__init__(weight_name, bias_name, lazy_load, lazy_load_file)
+
+
+@MM_WEIGHT_REGISTER("gguf-Q4_K_S")
+class MMWeightGGUFQ4KS(MMWeightGGUFTemplate):
+    qtype = gguf.GGMLQuantizationType.Q4_K
+    def __init__(self, weight_name, bias_name, lazy_load=False, lazy_load_file=None):
+        super().__init__(weight_name, bias_name, lazy_load, lazy_load_file)
+
+@MM_WEIGHT_REGISTER("gguf-Q4_1")
+class MMWeightGGUFQ41(MMWeightGGUFTemplate):
+    qtype = gguf.GGMLQuantizationType.Q4_1
+
+
+@MM_WEIGHT_REGISTER("gguf-Q4_0")
+class MMWeightGGUFQ40(MMWeightGGUFTemplate):
+    qtype = gguf.GGMLQuantizationType.Q4_0
+
+
+@MM_WEIGHT_REGISTER("gguf-Q3_K")
+class MMWeightGGUFQ3K(MMWeightGGUFTemplate):
+    qtype = gguf.GGMLQuantizationType.Q3_K
+
+
+@MM_WEIGHT_REGISTER("gguf-Q2_K")
+class MMWeightGGUFQ2K(MMWeightGGUFTemplate):
+    qtype = gguf.GGMLQuantizationType.Q2_K
 
 
 @MM_WEIGHT_REGISTER("int4-g128-marlin")

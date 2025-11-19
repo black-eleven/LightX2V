@@ -12,6 +12,7 @@ import torch.distributed as dist
 import torchvision
 from einops import rearrange
 from loguru import logger
+from lightx2v.utils.gguf import load_gguf_clip_ckpt
 
 
 def seed_all(seed):
@@ -373,12 +374,15 @@ def load_pt_safetensors(in_path, remove_key=None, include_keys=None):
                     keys_to_keep.append(key)
         # 只保留符合条件的key
         state_dict = {k: state_dict[k] for k in keys_to_keep}
+    elif ext in (".gguf"):
+        state_dict = load_gguf_clip_ckpt(in_path)
     else:
         state_dict = load_safetensors(in_path, remove_key, include_keys)
     return state_dict
 
 
 def load_weights(checkpoint_path, cpu_offload=False, remove_key=None, load_from_rank0=False, include_keys=None):
+    print(checkpoint_path)
     if not dist.is_initialized() or not load_from_rank0:
         # Single GPU mode
         logger.info(f"Loading weights from {checkpoint_path}")

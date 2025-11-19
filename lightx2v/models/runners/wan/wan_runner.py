@@ -108,10 +108,18 @@ class WanRunner(DefaultRunner):
         if t5_quantized:
             t5_quant_scheme = self.config.get("t5_quant_scheme", None)
             assert t5_quant_scheme is not None
-            tmp_t5_quant_scheme = t5_quant_scheme.split("-")[0]
-            t5_model_name = f"models_t5_umt5-xxl-enc-{tmp_t5_quant_scheme}.pth"
-            t5_quantized_ckpt = find_torch_model_path(self.config, "t5_quantized_ckpt", t5_model_name)
-            t5_original_ckpt = None
+            # TODO 
+            if "gguf" in t5_quant_scheme:
+                tmp_t5_quant_scheme = t5_quant_scheme.split("-")[1]
+                t5_model_name = f"models_t5_umt5-xxl-enc-{tmp_t5_quant_scheme}.gguf"
+                t5_quantized_ckpt = find_torch_model_path(self.config, "t5_quantized_ckpt", t5_model_name)
+                t5_original_ckpt = None
+            else:
+                tmp_t5_quant_scheme = t5_quant_scheme.split("-")[0]
+                t5_model_name = f"models_t5_umt5-xxl-enc-{tmp_t5_quant_scheme}.pth"
+                t5_quantized_ckpt = find_torch_model_path(self.config, "t5_quantized_ckpt", t5_model_name)
+                t5_original_ckpt = None
+            print(tmp_t5_quant_scheme, t5_model_name, t5_quantized_ckpt, t5_original_ckpt)
             tokenizer_path = os.path.join(os.path.dirname(t5_quantized_ckpt), "google/umt5-xxl")
         else:
             t5_quant_scheme = None
@@ -259,6 +267,7 @@ class WanRunner(DefaultRunner):
     def run_image_encoder(self, first_frame, last_frame=None):
         if self.config.get("lazy_load", False) or self.config.get("unload_modules", False):
             self.image_encoder = self.load_image_encoder()
+
         if last_frame is None:
             clip_encoder_out = self.image_encoder.visual([first_frame]).squeeze(0).to(GET_DTYPE())
         else:

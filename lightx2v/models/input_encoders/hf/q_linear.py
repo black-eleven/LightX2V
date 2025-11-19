@@ -310,3 +310,36 @@ class Q8FQuantLinearFp8(nn.Module):
         self.weight_scale = maybe_cast(self.weight_scale)
         self.bias = maybe_cast(self.bias)
         return self
+
+
+class GGUFQuantLinearQ4KS(nn.Module):
+    def __init__(self, in_features, out_features, bias=True, dtype=torch.float32):
+        print(in_features, out_features, bias, dtype)
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+
+        self.weight = self.register_buffer("weight", torch.empty((out_features, in_features), dtype=torch.uint8))
+        self.register_buffer("weight_scale", torch.empty((out_features, 1), dtype=torch.float32))
+        if bias:
+            self.register_buffer("bias", torch.empty(out_features, dtype=torch.float32))
+        else:
+            self.register_buffer("bias", None)
+
+    def forward(self, x):
+        pass
+
+    def _apply(self, fn):
+        for module in self.children():
+            module._apply(fn)
+
+        def maybe_cast(t):
+            if t is not None and t.device != fn(t).device:
+                return fn(t)
+            return t
+
+        self.weight = maybe_cast(self.weight)
+        # self.weight_scale = maybe_cast(self.weight_scale)
+        self.bias = maybe_cast(self.bias)
+        return self
+
