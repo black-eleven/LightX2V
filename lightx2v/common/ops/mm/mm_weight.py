@@ -6,7 +6,7 @@ from lightx2v.utils.envs import *
 from lightx2v.utils.global_paras import CALIB
 from lightx2v.utils.quant_utils import FloatQuantizer, IntegerQuantizer
 from lightx2v.utils.registry_factory import MM_WEIGHT_REGISTER
-from lightx2v.utils.gguf import GGMLTensor
+from lightx2v.utils.ggml_tensor import GGMLTensor
 
 try:
     from lightx2v_kernel.gemm import (
@@ -1010,7 +1010,7 @@ class MMWeightGGUFTemplate(MMWeightQuantTemplate):
         print(weight_dtype)
 
         self.pin_weight = GGMLTensor.empty_pinned(weight_shape, dtype=weight_dtype)
-        self.pin_weight.copy_from_dict(weight_dict, self.weight_name, transpose=True)
+        self.pin_weight.copy_from(self.weight)
         if self.bias_name is not None:
             self.bias = weight_dict[self.bias_name]
         else:

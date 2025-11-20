@@ -33,7 +33,7 @@ from lightx2v.models.networks.wan.weights.transformer_weights import (
 from lightx2v.utils.custom_compiler import CompiledMethodsMixin, compiled_method
 from lightx2v.utils.envs import *
 from lightx2v.utils.utils import *
-from lightx2v.utils.gguf import load_gguf_sd_ckpt
+from lightx2v.utils.ggml_tensor import load_gguf_sd_ckpt
 
 
 class WanModel(CompiledMethodsMixin):

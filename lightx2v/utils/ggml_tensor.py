@@ -5,66 +5,63 @@ from typing import Optional, Union, List, Tuple, Dict
 import gguf
 
 class GGMLTensor(torch.Tensor):
-    """
-    专门用于GGUF文件加载的GGMLTensor类
-    支持各种量化格式和GGUF特性
-    """
-    
-    @staticmethod
+
     def __new__(cls, 
-                data: Union[torch.Tensor, np.ndarray],
-                tensor_type: gguf.GGMLQuantizationType,
-                tensor_shape: Tuple[int, ...],
+                data: Union[torch.Tensor, np.ndarray, None] = None,
+                shape: Tuple[int, ...] = None,
                 dtype: torch.dtype = None,
+                gtype: gguf.GGMLQuantizationType = None,
                 requires_grad: bool = False,
                 aligned: bool = True,
                 pin_memory: bool = False,
                 preallocated: bool = False,
                 ):
-        """
-        专门为GGUF加载设计的构造函数
-        
-        Args:
-            data: 原始张量数据（可能是量化的）
-            tensor_type: GGUF量化类型
-            tensor_shape: 原始张量形状
-            dtype: 目标数据类型（自动推断）
-            requires_grad: 是否需要梯度
-            aligned: 是否内存对齐
-            pin_memory: 是否固定内存
-            preallocated: 是否预分配内存
-        """
-        # 处理NumPy数组
-        if isinstance(data, np.ndarray):
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", message="The given NumPy array is not writable")
-                torch_data = torch.from_numpy(data)
+        # 预分配模式处理
+        if preallocated and shape is not None:
+            if pin_memory:
+                torch_data = torch.empty(shape, dtype=dtype, requires_grad=requires_grad, pin_memory=True)
+            else:
+                torch_data = torch.empty(shape, dtype=dtype, requires_grad=requires_grad)
+        # 正常数据模式
+        elif data is not None:
+            if isinstance(data, np.ndarray):
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", message="The given NumPy array is not writable")
+                    torch_data = torch.from_numpy(data)
+            else:
+                torch_data = data
+
+            # 类型转换
+            if dtype is not None and torch_data.dtype != dtype:
+                torch_data = torch_data.to(dtype)
         else:
-            torch_data = data
-        
-        # 根据量化类型处理数据
+            raise ValueError("Either data or shape must be provided for preallocated tensors")
+
         result = super().__new__(cls, torch_data)
         return result
-    
+
     def __init__(self, 
-                 data: Union[torch.Tensor, np.ndarray],
-                 tensor_type: gguf.GGMLQuantizationType,
-                 tensor_shape: Tuple[int, ...],
+                 data: Union[torch.Tensor, np.ndarray, None] = None,
+                 shape: Tuple[int, ...] = None,
                  dtype: torch.dtype = None,
+                 gtype: gguf.GGMLQuantizationType = None,
                  requires_grad: bool = False,
                  aligned: bool = True,
-                 pin_memory: bool = False):
+                 pin_memory: bool = False,
+                 preallocated: bool = False,
+                 ):
         super().__init__()
-        
-        self._tensor_type = tensor_type
-        self._orig_shape = tensor_shape
+
+        self.gtype = gtype
+        self._orig_shape = shape
         self._aligned = aligned
         self._pinned_memory = pin_memory
         self._requires_grad = requires_grad
         
         # 量化相关属性
-        self._quantized = self._is_quantized_type(tensor_type)
-        self._q_type = self._get_quant_type_str(tensor_type)
+        self._quantized = self._is_quantized_type(gtype)
+        self._q_type = self._get_quant_type_str(gtype)
         self._scale = None
         self._zero_point = None
         self._blocksize = None
@@ -84,6 +81,7 @@ class GGMLTensor(torch.Tensor):
             self._make_aligned()
         if pin_memory:
             self._pin_memory()
+        print(self._orig_shape)
     
     def _is_quantized_type(self, tensor_type: gguf.GGMLQuantizationType) -> bool:
         """检查是否为量化类型"""
@@ -129,25 +127,25 @@ class GGMLTensor(torch.Tensor):
         """根据GGUF类型初始化张量"""
         if not self._quantized:
             # 非量化类型直接使用
-            if self._tensor_type == gguf.GGMLQuantizationType.F16:
+            if self.gtype == gguf.GGMLQuantizationType.F16:
                 # F16转换为FP32以便PyTorch处理
                 if self.dtype != torch.float32:
                     self.data = self.float().data
             return
         
         # 量化类型处理
-        if self._tensor_type in [gguf.GGMLQuantizationType.Q4_0, gguf.GGMLQuantizationType.Q4_1]:
+        if self.gtype in [gguf.GGMLQuantizationType.Q4_0, gguf.GGMLQuantizationType.Q4_1]:
             self._blocksize = 32
-        elif self._tensor_type in [gguf.GGMLQuantizationType.Q5_0, gguf.GGMLQuantizationType.Q5_1]:
+        elif self.gtype in [gguf.GGMLQuantizationType.Q5_0, gguf.GGMLQuantizationType.Q5_1]:
             self._blocksize = 32
-        elif self._tensor_type in [gguf.GGMLQuantizationType.Q8_0, gguf.GGMLQuantizationType.Q8_1]:
+        elif self.gtype in [gguf.GGMLQuantizationType.Q8_0, gguf.GGMLQuantizationType.Q8_1]:
             self._blocksize = 32
-        elif self._tensor_type in [gguf.GGMLQuantizationType.Q2_K, gguf.GGMLQuantizationType.Q3_K,
+        elif self.gtype in [gguf.GGMLQuantizationType.Q2_K, gguf.GGMLQuantizationType.Q3_K,
                                  gguf.GGMLQuantizationType.Q4_K, gguf.GGMLQuantizationType.Q5_K,
                                  gguf.GGMLQuantizationType.Q6_K, gguf.GGMLQuantizationType.Q8_K]:
             self._blocksize = 256  # K-quants通常使用256块大小
     
-    def dequantize(self, target_dtype: torch.dtype = torch.float32) -> 'GGMLTensor':
+    def dequantize(self, target_dtype: torch.dtype = torch.float32) -> torch.Tensor:
         """
         反量化张量为目标数据类型
         
@@ -158,14 +156,14 @@ class GGMLTensor(torch.Tensor):
             # 非量化张量直接转换类型
             if self.dtype != target_dtype:
                 converted = self.to(target_dtype)
-                return GGMLTensor.from_torch(converted, self._tensor_type, self._orig_shape)
+                return GGMLTensor.from_torch(converted, self.gtype, self._orig_shape)
             return self
         
         # 这里实现具体的反量化逻辑
         # 注意：实际的反量化实现需要根据GGUF格式详细实现
-        if self._tensor_type == gguf.GGMLQuantizationType.Q4_0:
+        if self.gtype == gguf.GGMLQuantizationType.Q4_0:
             dequantized_data = self._dequantize_q4_0()
-        elif self._tensor_type == gguf.GGMLQuantizationType.Q8_0:
+        elif self.gtype == gguf.GGMLQuantizationType.Q8_0:
             dequantized_data = self._dequantize_q8_0()
         # 其他量化类型的处理...
         else:
@@ -202,7 +200,7 @@ class GGMLTensor(torch.Tensor):
             dtype: 数据类型
             aligned: 是否内存对齐
         """
-        return cls(tensor_shape=shape, dtype=dtype, pin_memory=True, aligned=aligned, preallocated=True)
+        return cls(shape=shape, dtype=dtype, pin_memory=True, aligned=aligned, preallocated=True)
     
     @classmethod
     def empty_aligned(cls,
@@ -338,7 +336,7 @@ class GGMLTensor(torch.Tensor):
     @property
     def tensor_type(self) -> gguf.GGMLQuantizationType:
         """获取GGUF张量类型"""
-        return self._tensor_type
+        return self.gtype
     
     @property
     def quant_type(self) -> str:
@@ -377,6 +375,7 @@ class GGMLTensor(torch.Tensor):
         return (f"GGMLTensor(shape={self.shape}, orig_shape={self.orig_shape}, "
                 f"dtype={self.dtype}, quantized={self.is_quantized}, "
                 f"quant_type='{self.quant_type}', pinned={self.is_pinned})")
+                # f"data={self.data}")
 
     def cuda(self, device: Optional[Union[int, torch.device]] = None, non_blocking: bool = False) -> 'GGMLTensor':
         """
@@ -395,7 +394,7 @@ class GGMLTensor(torch.Tensor):
         # 创建新的GGMLTensor，保持所有属性
         result = GGMLTensor.from_torch(
             cuda_tensor,
-            self._tensor_type,
+            self.gtype,
             self._orig_shape,
             aligned=False,  # CUDA张量不需要内存对齐
             pin_memory=False  # CUDA张量不能固定内存
@@ -424,7 +423,7 @@ class GGMLTensor(torch.Tensor):
         # 创建新的GGMLTensor，保持所有属性
         result = GGMLTensor.from_torch(
             cpu_tensor,
-            self._tensor_type,
+            self.gtype,
             self._orig_shape,
             aligned=self._aligned,
             pin_memory=pin_memory
@@ -465,7 +464,7 @@ class GGMLTensor(torch.Tensor):
 
             result = GGMLTensor.from_torch(
                 result_tensor,
-                self._tensor_type,
+                self.gtype,
                 self._orig_shape,
                 aligned=self._aligned if result_tensor.device.type == 'cpu' else False,
                 pin_memory=pin_memory
@@ -488,7 +487,6 @@ class GGMLTensor(torch.Tensor):
 # 修改后的加载函数
 def load_gguf_sd_ckpt(gguf_path, return_arch=False):
     import warnings
-    import gguf
     
     logger.info(f"Loading gguf-quant dit model from {gguf_path}")
 
@@ -512,8 +510,8 @@ def load_gguf_sd_ckpt(gguf_path, return_arch=False):
         # 创建GGMLTensor并添加到state_dict
         state_dict[tensor.name] = GGMLTensor(
             data=torch_tensor,
-            tensor_type=tensor.tensor_type,
-            tensor_shape=shape,
+            gtype=tensor.tensor_type,
+            shape=shape,
             aligned=True,  # 启用内存对齐
             pin_memory=False  # 根据需求调整
         )
@@ -539,12 +537,37 @@ def load_gguf_sd_ckpt(gguf_path, return_arch=False):
 def get_orig_shape(reader, tensor_name: str) -> Optional[Tuple[int, ...]]:
     """从GGUF读取器获取原始张量形状"""
     # 实现根据GGUF格式获取原始形状的逻辑
-    return None
+    # 这里正式上线的时候，需要更换
+    field_key = f"comfy.gguf.orig_shape.{tensor_name}"
+    field = reader.get_field(field_key)
+    if field is None:
+        return None
+    # Has original shape metadata, so we try to decode it.
+    if len(field.types) != 2 or field.types[0] != gguf.GGUFValueType.ARRAY or field.types[1] != gguf.GGUFValueType.INT32:
+        raise TypeError(f"Bad original shape metadata for {field_key}: Expected ARRAY of INT32, got {field.types}")
+    return torch.Size(tuple(int(field.parts[part_idx][0]) for part_idx in field.data))
+
+
+def get_field(reader, field_name, field_type):
+    field = reader.get_field(field_name)
+    if field is None:
+        return None
+    elif field_type == str:
+        # extra check here as this is used for checking arch string
+        if len(field.types) != 1 or field.types[0] != gguf.GGUFValueType.STRING:
+            raise TypeError(f"Bad type for GGUF {field_name} key: expected string, got {field.types!r}")
+        return str(field.parts[field.data[-1]], encoding="utf-8")
+    elif field_type in [int, float, bool]:
+        return field_type(field.parts[field.data[-1]])
+    else:
+        raise TypeError(f"Unknown field type {field_type}")
+
 
 def get_model_architecture(reader) -> str:
     """从GGUF读取器获取模型架构信息"""
     # 实现获取模型架构的逻辑
-    return "unknown"
+    arch_str = get_field(reader, "general.architecture", str)
+    return arch_str
 
 # for remapping llama.cpp -> original key names
 # TODO 转模型的时候就把这些key对应好
@@ -584,3 +607,16 @@ def load_gguf_clip_ckpt(path):
     else:
         pass
     return sd
+
+
+if __name__ == "__main__":
+    sd, arch = load_gguf_sd_ckpt("/home/SENSETIME/yihuiwen/yihuiwen/workspace/models/city96/Wan2.1-I2V-14B-720P-gguf/wan2.1-i2v-14b-720p-Q4_K_S.gguf",
+                      return_arch=True)
+
+    print(arch)
+
+    for k, s in sd.items():
+        print(k)
+        a = GGMLTensor.empty_pinned(s.shape, dtype=s.dtype)
+        print(a)
+
