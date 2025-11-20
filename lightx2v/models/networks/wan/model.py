@@ -238,7 +238,6 @@ class WanModel(CompiledMethodsMixin):
     def _load_gguf_ckpt(self):
         gguf_path = self.config["dit_quantized_ckpt"]
         state_dict = load_gguf_sd_ckpt(gguf_path)
-        print(state_dict)
         return state_dict
 
 

@@ -58,6 +58,7 @@ class GGMLTensor(torch.Tensor):
         self._aligned = aligned
         self._pinned_memory = pin_memory
         self._requires_grad = requires_grad
+        self._preallocated = preallocated
         
         # 量化相关属性
         self._quantized = self._is_quantized_type(gtype)
@@ -617,6 +618,9 @@ if __name__ == "__main__":
 
     for k, s in sd.items():
         print(k)
+        weight_shape = s.orig_shape
+        weight_dtype = s.dtype
         a = GGMLTensor.empty_pinned(s.shape, dtype=s.dtype)
+        a.copy_from(s)
         print(a)
 

@@ -1005,7 +1005,7 @@ class MMWeightGGUFTemplate(MMWeightQuantTemplate):
         self.weight = weight_dict[self.weight_name]
 
         weight_shape = self.weight.orig_shape
-        weight_dtype = self.weight.tensor_type
+        weight_dtype = self.weight.dtype
         print(weight_shape)
         print(weight_dtype)
 
