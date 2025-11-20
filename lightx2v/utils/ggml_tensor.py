@@ -607,5 +607,6 @@ if __name__ == "__main__":
         weight_dtype = s.dtype
         a = GGMLTensor.empty_pinned(s.shape, dtype=s.dtype)
         a.copy_from(s)
+        s.to("cpu")
         print(a)
 
