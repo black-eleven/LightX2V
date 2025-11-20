@@ -4,6 +4,8 @@ import numpy as np
 from typing import Optional, Union, List, Tuple, Dict
 import gguf
 
+TORCH_COMPATIBLE_QTYPES = (None, gguf.GGMLQuantizationType.F32, gguf.GGMLQuantizationType.F16)
+
 class GGMLTensor(torch.Tensor):
 
     def __new__(cls, 
@@ -82,47 +84,30 @@ class GGMLTensor(torch.Tensor):
             self._make_aligned()
         if pin_memory:
             self._pin_memory()
-        print(self._orig_shape)
     
-    def _is_quantized_type(self, tensor_type: gguf.GGMLQuantizationType) -> bool:
+    def _is_quantized_type(self, gtype: gguf.GGMLQuantizationType) -> bool:
         """检查是否为量化类型"""
-        quant_types = {
-            gguf.GGMLQuantizationType.F32: False,
-            gguf.GGMLQuantizationType.F16: False,
-            gguf.GGMLQuantizationType.Q4_0: True,
-            gguf.GGMLQuantizationType.Q4_1: True,
-            gguf.GGMLQuantizationType.Q5_0: True,
-            gguf.GGMLQuantizationType.Q5_1: True,
-            gguf.GGMLQuantizationType.Q8_0: True,
-            gguf.GGMLQuantizationType.Q8_1: True,
-            gguf.GGMLQuantizationType.Q2_K: True,
-            gguf.GGMLQuantizationType.Q3_K: True,
-            gguf.GGMLQuantizationType.Q4_K: True,
-            gguf.GGMLQuantizationType.Q5_K: True,
-            gguf.GGMLQuantizationType.Q6_K: True,
-            gguf.GGMLQuantizationType.Q8_K: True,
-        }
-        return quant_types.get(tensor_type, False)
+        return not gtype in TORCH_COMPATIBLE_QTYPES
     
-    def _get_quant_type_str(self, tensor_type: gguf.GGMLQuantizationType) -> str:
+    def _get_quant_type_str(self, gtype: gguf.GGMLQuantizationType) -> str:
         """获取量化类型字符串"""
         type_mapping = {
-            gguf.GGMLQuantizationType.F32: "f32",
-            gguf.GGMLQuantizationType.F16: "f16",
-            gguf.GGMLQuantizationType.Q4_0: "q4_0",
-            gguf.GGMLQuantizationType.Q4_1: "q4_1",
-            gguf.GGMLQuantizationType.Q5_0: "q5_0",
-            gguf.GGMLQuantizationType.Q5_1: "q5_1",
-            gguf.GGMLQuantizationType.Q8_0: "q8_0",
-            gguf.GGMLQuantizationType.Q8_1: "q8_1",
-            gguf.GGMLQuantizationType.Q2_K: "q2_k",
-            gguf.GGMLQuantizationType.Q3_K: "q3_k",
-            gguf.GGMLQuantizationType.Q4_K: "q4_k",
-            gguf.GGMLQuantizationType.Q5_K: "q5_k",
-            gguf.GGMLQuantizationType.Q6_K: "q6_k",
-            gguf.GGMLQuantizationType.Q8_K: "q8_k",
+            gguf.GGMLQuantizationType.F32: "ggml_f32",
+            gguf.GGMLQuantizationType.F16: "ggml_f16",
+            gguf.GGMLQuantizationType.Q4_0: "ggml_q4_0",
+            gguf.GGMLQuantizationType.Q4_1: "ggml_q4_1",
+            gguf.GGMLQuantizationType.Q5_0: "ggml_q5_0",
+            gguf.GGMLQuantizationType.Q5_1: "ggml_q5_1",
+            gguf.GGMLQuantizationType.Q8_0: "ggml_q8_0",
+            gguf.GGMLQuantizationType.Q8_1: "ggml_q8_1",
+            gguf.GGMLQuantizationType.Q2_K: "ggml_q2_k",
+            gguf.GGMLQuantizationType.Q3_K: "ggml_q3_k",
+            gguf.GGMLQuantizationType.Q4_K: "ggml_q4_k",
+            gguf.GGMLQuantizationType.Q5_K: "ggml_q5_k",
+            gguf.GGMLQuantizationType.Q6_K: "ggml_q6_k",
+            gguf.GGMLQuantizationType.Q8_K: "ggml_q8_k",
         }
-        return type_mapping.get(tensor_type, "unknown")
+        return type_mapping.get(gtype, "unknown")
     
     def _init_from_gguf_type(self):
         """根据GGUF类型初始化张量"""
@@ -326,7 +311,7 @@ class GGMLTensor(torch.Tensor):
                   aligned: bool = True,
                   pin_memory: bool = False) -> 'GGMLTensor':
         """从PyTorch张量创建GGMLTensor"""
-        return cls(tensor, tensor_type, tensor_shape, 
+        return cls(tensor, gtype=tensor_type, shape=tensor_shape,
                   dtype=tensor.dtype, aligned=aligned, pin_memory=pin_memory)
     
     def to_torch(self) -> torch.Tensor:
@@ -377,6 +362,9 @@ class GGMLTensor(torch.Tensor):
                 f"dtype={self.dtype}, quantized={self.is_quantized}, "
                 f"quant_type='{self.quant_type}', pinned={self.is_pinned})")
                 # f"data={self.data}")
+
+    def to_cuda(self, device: Optional[Union[int, torch.device]] = None, non_blocking: bool = False) -> 'GGMLTensor':
+        return self.cuda(device=device, non_blocking=non_blocking)
 
     def cuda(self, device: Optional[Union[int, torch.device]] = None, non_blocking: bool = False) -> 'GGMLTensor':
         """
@@ -484,9 +472,8 @@ class GGMLTensor(torch.Tensor):
         return self
 
 
-
 # 修改后的加载函数
-def load_gguf_sd_ckpt(gguf_path, return_arch=False):
+def load_gguf_sd_ckpt(gguf_path, return_arch=False, to_device: Optional[Union[int, torch.device]] = None):
     import warnings
     
     logger.info(f"Loading gguf-quant dit model from {gguf_path}")
@@ -515,7 +502,7 @@ def load_gguf_sd_ckpt(gguf_path, return_arch=False):
             shape=shape,
             aligned=True,  # 启用内存对齐
             pin_memory=False  # 根据需求调整
-        )
+        ).to(to_device)
 
         # 统计加载的张量类型
         tensor_type_str = getattr(tensor.tensor_type, "name", repr(tensor.tensor_type))
@@ -538,7 +525,7 @@ def load_gguf_sd_ckpt(gguf_path, return_arch=False):
 def get_orig_shape(reader, tensor_name: str) -> Optional[Tuple[int, ...]]:
     """从GGUF读取器获取原始张量形状"""
     # 实现根据GGUF格式获取原始形状的逻辑
-    # 这里正式上线的时候，需要更换
+    # TODO 这里正式上线的时候，需要更换
     field_key = f"comfy.gguf.orig_shape.{tensor_name}"
     field = reader.get_field(field_key)
     if field is None:
@@ -613,8 +600,6 @@ def load_gguf_clip_ckpt(path):
 if __name__ == "__main__":
     sd, arch = load_gguf_sd_ckpt("/home/SENSETIME/yihuiwen/yihuiwen/workspace/models/city96/Wan2.1-I2V-14B-720P-gguf/wan2.1-i2v-14b-720p-Q4_K_S.gguf",
                       return_arch=True)
-
-    print(arch)
 
     for k, s in sd.items():
         print(k)

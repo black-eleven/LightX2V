@@ -1004,10 +1004,8 @@ class MMWeightGGUFTemplate(MMWeightQuantTemplate):
     def load_gguf(self, weight_dict):
         self.weight = weight_dict[self.weight_name]
 
-        weight_shape = self.weight.orig_shape
+        weight_shape = self.weight.shape
         weight_dtype = self.weight.dtype
-        print(weight_shape)
-        print(weight_dtype)
 
         self.pin_weight = GGMLTensor.empty_pinned(weight_shape, dtype=weight_dtype)
         self.pin_weight.copy_from(self.weight)

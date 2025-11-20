@@ -1,10 +1,12 @@
 #!/bin/bash
 
 # set path and first
-lightx2v_path=/home/SENSETIME/yihuiwen/yihuiwen/workspace/src/github.com/modelTC/LightX2V
-model_path=/home/SENSETIME/yihuiwen/yihuiwen/workspace/models/city96/Wan2.1-I2V-14B-720P-gguf
++lightx2v_path=/data/yihuiwen/src/github.com/black-eleven/LightX2V
++model_path=/data/yihuiwen/models/Wan2.1-I2V-14B-720P-gguf
 
 export CUDA_VISIBLE_DEVICES=0
+
+export SENSITIVE_LAYER_DTYPE=FP16
 
 # set environment variables
 source ${lightx2v_path}/scripts/base/base.sh
