@@ -131,61 +131,11 @@ class GGMLTensor(torch.Tensor):
                                  gguf.GGMLQuantizationType.Q6_K, gguf.GGMLQuantizationType.Q8_K]:
             self._blocksize = 256  # K-quants通常使用256块大小
     
-    def dequantize(self, target_dtype: torch.dtype = torch.float32) -> torch.Tensor:
-        """
-        反量化张量为目标数据类型
-        
-        Args:
-            target_dtype: 目标数据类型
-        """
-        if not self._quantized:
-            # 非量化张量直接转换类型
-            if self.dtype != target_dtype:
-                converted = self.to(target_dtype)
-                return GGMLTensor.from_torch(converted, self.gtype, self._orig_shape)
-            return self
-        
-        # 这里实现具体的反量化逻辑
-        # 注意：实际的反量化实现需要根据GGUF格式详细实现
-        if self.gtype == gguf.GGMLQuantizationType.Q4_0:
-            dequantized_data = self._dequantize_q4_0()
-        elif self.gtype == gguf.GGMLQuantizationType.Q8_0:
-            dequantized_data = self._dequantize_q8_0()
-        # 其他量化类型的处理...
-        else:
-            # 默认简单处理（实际使用时需要完整实现）
-            dequantized_data = self.float()
-        
-        # 重塑形状并创建新的GGMLTensor
-        dequantized_data = dequantized_data.reshape(*self._orig_shape)
-        return GGMLTensor.from_torch(dequantized_data.to(target_dtype), 
-                                   gguf.GGMLQuantizationType.F32, 
-                                   self._orig_shape)
-    
-    def _dequantize_q4_0(self) -> torch.Tensor:
-        """Q4_0反量化实现（简化版）"""
-        # 实际实现需要根据GGUF的Q4_0格式解析
-        # 这里返回一个简单实现
-        return torch.randn(self._orig_shape, dtype=torch.float32)
-    
-    def _dequantize_q8_0(self) -> torch.Tensor:
-        """Q8_0反量化实现（简化版）"""
-        # 实际实现需要根据GGUF的Q8_0格式解析
-        return torch.randn(self._orig_shape, dtype=torch.float32)
-    
     @classmethod
     def empty_pinned(cls, 
                     shape: Tuple[int, ...], 
                     dtype: torch.dtype = torch.float32,
                     aligned: bool = True) -> 'GGMLTensor':
-        """
-        创建预分配的固定内存张量
-        
-        Args:
-            shape: 张量形状
-            dtype: 数据类型
-            aligned: 是否内存对齐
-        """
         return cls(shape=shape, dtype=dtype, pin_memory=True, aligned=aligned, preallocated=True)
     
     @classmethod
@@ -193,28 +143,12 @@ class GGMLTensor(torch.Tensor):
                      shape: Tuple[int, ...],
                      dtype: torch.dtype = torch.float32,
                      pin_memory: bool = False) -> 'GGMLTensor':
-        """
-        创建预分配的对齐内存张量
-        
-        Args:
-            shape: 张量形状
-            dtype: 数据类型
-            pin_memory: 是否固定内存
-        """
         return cls(shape=shape, dtype=dtype, pin_memory=pin_memory, aligned=True, preallocated=True)
     
     def copy_from(self, 
                  source: Union[torch.Tensor, 'GGMLTensor'],
                  transpose: bool = False,
                  non_blocking: bool = False) -> 'GGMLTensor':
-        """
-        从源张量复制数据到当前张量
-        
-        Args:
-            source: 源张量
-            transpose: 是否转置源数据
-            non_blocking: 是否非阻塞复制
-        """
         if not self._preallocated:
             raise RuntimeError("copy_from can only be used with preallocated tensors")
         
@@ -238,15 +172,6 @@ class GGMLTensor(torch.Tensor):
                       weight_name: str,
                       transpose: bool = False,
                       non_blocking: bool = False) -> 'GGMLTensor':
-        """
-        从权重字典中复制指定名称的权重
-        
-        Args:
-            weight_dict: 权重字典
-            weight_name: 权重名称
-            transpose: 是否转置权重
-            non_blocking: 是否非阻塞复制
-        """
         if weight_name not in weight_dict:
             raise KeyError(f"Weight '{weight_name}' not found in weight dictionary")
         
@@ -257,14 +182,6 @@ class GGMLTensor(torch.Tensor):
                target: Union[torch.Tensor, 'GGMLTensor'],
                transpose: bool = False,
                non_blocking: bool = False) -> 'GGMLTensor':
-        """
-        复制当前张量数据到目标张量
-        
-        Args:
-            target: 目标张量
-            transpose: 是否转置数据
-            non_blocking: 是否非阻塞复制
-        """
         source_data = self
         if transpose:
             source_data = self.t().contiguous()
@@ -310,12 +227,10 @@ class GGMLTensor(torch.Tensor):
                   tensor_shape: Tuple[int, ...],
                   aligned: bool = True,
                   pin_memory: bool = False) -> 'GGMLTensor':
-        """从PyTorch张量创建GGMLTensor"""
         return cls(tensor, gtype=tensor_type, shape=tensor_shape,
                   dtype=tensor.dtype, aligned=aligned, pin_memory=pin_memory)
     
     def to_torch(self) -> torch.Tensor:
-        """转换为普通PyTorch张量"""
         return torch.as_tensor(self)
     
     # 属性访问方法
@@ -367,13 +282,6 @@ class GGMLTensor(torch.Tensor):
         return self.cuda(device=device, non_blocking=non_blocking)
 
     def cuda(self, device: Optional[Union[int, torch.device]] = None, non_blocking: bool = False) -> 'GGMLTensor':
-        """
-        移动到CUDA设备，保持GGMLTensor类型和属性
-
-        Args:
-            device: CUDA设备
-            non_blocking: 是否非阻塞传输
-        """
         # 使用父类的cuda方法移动数据
         if device is None:
             cuda_tensor = super().cuda(non_blocking=non_blocking)
@@ -400,12 +308,6 @@ class GGMLTensor(torch.Tensor):
         return result
 
     def cpu(self, pin_memory: bool = False) -> 'GGMLTensor':
-        """
-        移动到CPU设备，保持GGMLTensor类型和属性
-
-        Args:
-            pin_memory: 是否固定内存
-        """
         # 使用父类的cpu方法移动数据
         cpu_tensor = super().cpu()
 
@@ -429,15 +331,6 @@ class GGMLTensor(torch.Tensor):
         return result
 
     def to(self, *args, **kwargs) -> 'GGMLTensor':
-        """
-        重写to方法，保持GGMLTensor类型
-
-        支持各种用法:
-        - tensor.to(device)
-        - tensor.to(dtype)
-        - tensor.to(device, dtype)
-        - tensor.to(other_tensor)
-        """
         # 调用父类的to方法
         result_tensor = super().to(*args, **kwargs)
 
@@ -480,8 +373,6 @@ def load_gguf_sd_ckpt(gguf_path, return_arch=False, to_device: Optional[Union[in
 
     reader = gguf.GGUFReader(gguf_path)
     state_dict = {}
-    qtype_dict = {}
-    
     for tensor in reader.tensors:
         tensor_name = tensor.name
         
@@ -496,7 +387,8 @@ def load_gguf_sd_ckpt(gguf_path, return_arch=False, to_device: Optional[Union[in
             shape = torch.Size(tuple(int(v) for v in reversed(tensor.shape)))
 
         if tensor.tensor_type in TORCH_COMPATIBLE_QTYPES:
-            state_dict[tensor.name] = torch_tensor.to(to_device)
+            # TODO 由于测试用的t5模型都是bf16的，这里先强转成bf16
+            state_dict[tensor.name] = torch_tensor.torch.bfloat16).to(to_device)
         else:
             # 创建GGMLTensor并添加到state_dict
             state_dict[tensor.name] = GGMLTensor(
@@ -509,12 +401,6 @@ def load_gguf_sd_ckpt(gguf_path, return_arch=False, to_device: Optional[Union[in
 
         # 统计加载的张量类型
         tensor_type_str = getattr(tensor.tensor_type, "name", repr(tensor.tensor_type))
-        qtype_dict[tensor_type_str] = qtype_dict.get(tensor_type_str, 0) + 1
-    
-    # 打印加载统计信息
-    logger.info("Loaded tensor types:")
-    for qtype, count in qtype_dict.items():
-        logger.info(f"  {qtype}: {count}")
     
     if return_arch:
         # 提取模型架构信息
@@ -560,44 +446,237 @@ def get_model_architecture(reader) -> str:
     arch_str = get_field(reader, "general.architecture", str)
     return arch_str
 
-# for remapping llama.cpp -> original key names
-# TODO 转模型的时候就把这些key对应好
-T5_SD_MAP = {
-    "enc.blk": "blocks",
-    "token_embd": "token_embedding",
-    "enc.output_norm": "norm",
-    "attn_norm": "norm1",
-    "attn_q": "attn.q",
-    "attn_k": "attn.k",
-    "attn_v": "attn.v",
-    "attn_o": "attn.o",
-    "attn_rel_b": "pos_embedding.embedding",
-    "ffn_up": "ffn.fc1",
-    "ffn_down": "ffn.fc2",
-    "ffn_gate": "ffn.gate.0",
-    "ffn_norm": "norm2",
 
-    # "attn_q": "layer.0.SelfAttention.q",
-    # "attn_k": "layer.0.SelfAttention.k",
-    # "attn_v": "layer.0.SelfAttention.v",
-    # "attn_o": "layer.0.SelfAttention.o",
-    # "attn_norm": "layer.0.norm1",
-    # "attn_rel_b": "layer.0.SelfAttention.relative_attention_bias",
-    # "ffn_up": "layer.1.DenseReluDense.wi_1",
-    # "ffn_down": "layer.1.DenseReluDense.wo",
-    # "ffn_gate": "layer.1.DenseReluDense.wi_0",
-    # "ffn_norm": "layer.1.norm2",
-}
+def dequantize_tensor(tensor, dtype=None):
+    qtype = getattr(tensor, "tensor_type", None)
+    oshape = getattr(tensor, "tensor_shape", tensor.shape)
 
-
-def load_gguf_clip_ckpt(path):
-    sd, arch = load_gguf_sd_ckpt(path, return_arch=True)
-    if arch in {"t5", "t5encoder"}:
-        temb_key = "token_embd.weight"
-        sd = sd_map_replace(sd, T5_SD_MAP)
+    if qtype in TORCH_COMPATIBLE_QTYPES:
+        return tensor.to(dtype)
+    elif qtype in dequantize_functions:
+        return dequantize(tensor.data, qtype, oshape, dtype=dtype).to(dtype)
     else:
-        pass
-    return sd
+        # this is incredibly slow
+        tqdm.write(f"Falling back to numpy dequant for qtype: {qtype}")
+        new = gguf.quants.dequantize(tensor.cpu().numpy(), qtype)
+        return torch.from_numpy(new).to(tensor.device, dtype=dtype)
+
+def dequantize(data, qtype, oshape, dtype=None):
+    block_size, type_size = gguf.GGML_QUANT_SIZES[qtype]
+    dequantize_blocks = dequantize_functions[qtype]
+
+    rows = data.reshape(
+        (-1, data.shape[-1])
+    ).view(torch.uint8)
+
+    n_blocks = rows.numel() // type_size
+    blocks = rows.reshape((n_blocks, type_size))
+    blocks = dequantize_blocks(blocks, block_size, type_size, dtype)
+    return blocks.reshape(oshape)
+
+def to_uint32(x):
+    # no uint32 :(
+    x = x.view(torch.uint8).to(torch.int32)
+    return (x[:, 0] | x[:, 1] << 8 | x[:, 2] << 16 | x[:, 3] << 24).unsqueeze(1)
+
+def split_block_dims(blocks, *args):
+    n_max = blocks.shape[1]
+    dims = list(args) + [n_max - sum(args)]
+    return torch.split(blocks, dims, dim=1)
+
+# Full weights #
+def dequantize_blocks_BF16(blocks, block_size, type_size, dtype=None):
+    return (blocks.view(torch.int16).to(torch.int32) << 16).view(torch.float32)
+
+# Legacy Quants #
+def dequantize_blocks_Q8_0(blocks, block_size, type_size, dtype=None):
+    d, x = split_block_dims(blocks, 2)
+    d = d.view(torch.float16).to(dtype)
+    x = x.view(torch.int8)
+    return (d * x)
+
+def dequantize_blocks_Q5_1(blocks, block_size, type_size, dtype=None):
+    n_blocks = blocks.shape[0]
+
+    d, m, qh, qs = split_block_dims(blocks, 2, 2, 4)
+    d = d.view(torch.float16).to(dtype)
+    m = m.view(torch.float16).to(dtype)
+    qh = to_uint32(qh)
+
+    qh = qh.reshape((n_blocks, 1)) >> torch.arange(32, device=d.device, dtype=torch.int32).reshape(1, 32)
+    ql = qs.reshape((n_blocks, -1, 1, block_size // 2)) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape(1, 1, 2, 1)
+    qh = (qh & 1).to(torch.uint8)
+    ql = (ql & 0x0F).reshape((n_blocks, -1))
+
+    qs = (ql | (qh << 4))
+    return (d * qs) + m
+
+def dequantize_blocks_Q5_0(blocks, block_size, type_size, dtype=None):
+    n_blocks = blocks.shape[0]
+
+    d, qh, qs = split_block_dims(blocks, 2, 4)
+    d  = d.view(torch.float16).to(dtype)
+    qh = to_uint32(qh)
+
+    qh = qh.reshape(n_blocks, 1) >> torch.arange(32, device=d.device, dtype=torch.int32).reshape(1, 32)
+    ql = qs.reshape(n_blocks, -1, 1, block_size // 2) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape(1, 1, 2, 1)
+
+    qh = (qh & 1).to(torch.uint8)
+    ql = (ql & 0x0F).reshape(n_blocks, -1)
+
+    qs = (ql | (qh << 4)).to(torch.int8) - 16
+    return (d * qs)
+
+def dequantize_blocks_Q4_1(blocks, block_size, type_size, dtype=None):
+    n_blocks = blocks.shape[0]
+
+    d, m, qs = split_block_dims(blocks, 2, 2)
+    d = d.view(torch.float16).to(dtype)
+    m = m.view(torch.float16).to(dtype)
+
+    qs = qs.reshape((n_blocks, -1, 1, block_size // 2)) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape(1, 1, 2, 1)
+    qs = (qs & 0x0F).reshape(n_blocks, -1)
+
+    return (d * qs) + m
+
+def dequantize_blocks_Q4_0(blocks, block_size, type_size, dtype=None):
+    n_blocks = blocks.shape[0]
+
+    d, qs = split_block_dims(blocks, 2)
+    d  = d.view(torch.float16).to(dtype)
+
+    qs = qs.reshape((n_blocks, -1, 1, block_size // 2)) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape((1, 1, 2, 1))
+    qs = (qs & 0x0F).reshape((n_blocks, -1)).to(torch.int8) - 8
+    return (d * qs)
+
+# K Quants #
+QK_K = 256
+K_SCALE_SIZE = 12
+
+def get_scale_min(scales):
+    n_blocks = scales.shape[0]
+    scales = scales.view(torch.uint8)
+    scales = scales.reshape((n_blocks, 3, 4))
+
+    d, m, m_d = torch.split(scales, scales.shape[-2] // 3, dim=-2)
+
+    sc = torch.cat([d & 0x3F, (m_d & 0x0F) | ((d >> 2) & 0x30)], dim=-1)
+    min = torch.cat([m & 0x3F, (m_d >> 4) | ((m >> 2) & 0x30)], dim=-1)
+
+    return (sc.reshape((n_blocks, 8)), min.reshape((n_blocks, 8)))
+
+def dequantize_blocks_Q6_K(blocks, block_size, type_size, dtype=None):
+    n_blocks = blocks.shape[0]
+
+    ql, qh, scales, d, = split_block_dims(blocks, QK_K // 2, QK_K // 4, QK_K // 16)
+
+    scales = scales.view(torch.int8).to(dtype)
+    d = d.view(torch.float16).to(dtype)
+    d = (d * scales).reshape((n_blocks, QK_K // 16, 1))
+
+    ql = ql.reshape((n_blocks, -1, 1, 64)) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape((1, 1, 2, 1))
+    ql = (ql & 0x0F).reshape((n_blocks, -1, 32))
+    qh = qh.reshape((n_blocks, -1, 1, 32)) >> torch.tensor([0, 2, 4, 6], device=d.device, dtype=torch.uint8).reshape((1, 1, 4, 1))
+    qh = (qh & 0x03).reshape((n_blocks, -1, 32))
+    q = (ql | (qh << 4)).to(torch.int8) - 32
+    q = q.reshape((n_blocks, QK_K // 16, -1))
+
+    return (d * q).reshape((n_blocks, QK_K))
+
+def dequantize_blocks_Q5_K(blocks, block_size, type_size, dtype=None):
+    n_blocks = blocks.shape[0]
+
+    d, dmin, scales, qh, qs = split_block_dims(blocks, 2, 2, K_SCALE_SIZE, QK_K // 8)
+
+    d = d.view(torch.float16).to(dtype)
+    dmin = dmin.view(torch.float16).to(dtype)
+
+    sc, m = get_scale_min(scales)
+
+    d = (d * sc).reshape((n_blocks, -1, 1))
+    dm = (dmin * m).reshape((n_blocks, -1, 1))
+
+    ql = qs.reshape((n_blocks, -1, 1, 32)) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape((1, 1, 2, 1))
+    qh = qh.reshape((n_blocks, -1, 1, 32)) >> torch.tensor([i for i in range(8)], device=d.device, dtype=torch.uint8).reshape((1, 1, 8, 1))
+    ql = (ql & 0x0F).reshape((n_blocks, -1, 32))
+    qh = (qh & 0x01).reshape((n_blocks, -1, 32))
+    q = (ql | (qh << 4))
+
+    return (d * q - dm).reshape((n_blocks, QK_K))
+
+def dequantize_blocks_Q4_K(blocks, block_size, type_size, dtype=None):
+    n_blocks = blocks.shape[0]
+
+    d, dmin, scales, qs = split_block_dims(blocks, 2, 2, K_SCALE_SIZE)
+    d = d.view(torch.float16).to(dtype)
+    dmin = dmin.view(torch.float16).to(dtype)
+
+    sc, m = get_scale_min(scales)
+
+    d = (d * sc).reshape((n_blocks, -1, 1))
+    dm = (dmin * m).reshape((n_blocks, -1, 1))
+
+    qs = qs.reshape((n_blocks, -1, 1, 32)) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape((1, 1, 2, 1))
+    qs = (qs & 0x0F).reshape((n_blocks, -1, 32))
+
+    return (d * qs - dm).reshape((n_blocks, QK_K))
+
+def dequantize_blocks_Q3_K(blocks, block_size, type_size, dtype=None):
+    n_blocks = blocks.shape[0]
+
+    hmask, qs, scales, d = split_block_dims(blocks, QK_K // 8, QK_K // 4, 12)
+    d = d.view(torch.float16).to(dtype)
+
+    lscales, hscales = scales[:, :8], scales[:, 8:]
+    lscales = lscales.reshape((n_blocks, 1, 8)) >> torch.tensor([0, 4], device=d.device, dtype=torch.uint8).reshape((1, 2, 1))
+    lscales = lscales.reshape((n_blocks, 16))
+    hscales = hscales.reshape((n_blocks, 1, 4)) >> torch.tensor([0, 2, 4, 6], device=d.device, dtype=torch.uint8).reshape((1, 4, 1))
+    hscales = hscales.reshape((n_blocks, 16))
+    scales = (lscales & 0x0F) | ((hscales & 0x03) << 4)
+    scales = (scales.to(torch.int8) - 32)
+
+    dl = (d * scales).reshape((n_blocks, 16, 1))
+
+    ql = qs.reshape((n_blocks, -1, 1, 32)) >> torch.tensor([0, 2, 4, 6], device=d.device, dtype=torch.uint8).reshape((1, 1, 4, 1))
+    qh = hmask.reshape(n_blocks, -1, 1, 32) >> torch.tensor([i for i in range(8)], device=d.device, dtype=torch.uint8).reshape((1, 1, 8, 1))
+    ql = ql.reshape((n_blocks, 16, QK_K // 16)) & 3
+    qh = (qh.reshape((n_blocks, 16, QK_K // 16)) & 1) ^ 1
+    q = (ql.to(torch.int8) - (qh << 2).to(torch.int8))
+
+    return (dl * q).reshape((n_blocks, QK_K))
+
+def dequantize_blocks_Q2_K(blocks, block_size, type_size, dtype=None):
+    n_blocks = blocks.shape[0]
+
+    scales, qs, d, dmin = split_block_dims(blocks, QK_K // 16, QK_K // 4, 2)
+    d = d.view(torch.float16).to(dtype)
+    dmin = dmin.view(torch.float16).to(dtype)
+
+    # (n_blocks, 16, 1)
+    dl = (d * (scales & 0xF)).reshape((n_blocks, QK_K // 16, 1))
+    ml = (dmin * (scales >> 4)).reshape((n_blocks, QK_K // 16, 1))
+
+    shift = torch.tensor([0, 2, 4, 6], device=d.device, dtype=torch.uint8).reshape((1, 1, 4, 1))
+
+    qs = (qs.reshape((n_blocks, -1, 1, 32)) >> shift) & 3
+    qs = qs.reshape((n_blocks, QK_K // 16, 16))
+    qs = dl * qs - ml
+
+    return qs.reshape((n_blocks, -1))
+
+dequantize_functions = {
+    gguf.GGMLQuantizationType.BF16: dequantize_blocks_BF16,
+    gguf.GGMLQuantizationType.Q8_0: dequantize_blocks_Q8_0,
+    gguf.GGMLQuantizationType.Q5_1: dequantize_blocks_Q5_1,
+    gguf.GGMLQuantizationType.Q5_0: dequantize_blocks_Q5_0,
+    gguf.GGMLQuantizationType.Q4_1: dequantize_blocks_Q4_1,
+    gguf.GGMLQuantizationType.Q4_0: dequantize_blocks_Q4_0,
+    gguf.GGMLQuantizationType.Q6_K: dequantize_blocks_Q6_K,
+    gguf.GGMLQuantizationType.Q5_K: dequantize_blocks_Q5_K,
+    gguf.GGMLQuantizationType.Q4_K: dequantize_blocks_Q4_K,
+    gguf.GGMLQuantizationType.Q3_K: dequantize_blocks_Q3_K,
+    gguf.GGMLQuantizationType.Q2_K: dequantize_blocks_Q2_K,
+}
 
 
 if __name__ == "__main__":
@@ -606,10 +685,6 @@ if __name__ == "__main__":
 
     for k, s in sd.items():
         print(k)
-        weight_shape = s.orig_shape
-        weight_dtype = s.dtype
-        a = GGMLTensor.empty_pinned(s.shape, dtype=s.dtype)
-        a.copy_from(s)
-        s.to("cpu")
-        print(a)
+        print(s.dtype)
+        print(getattr(s, "gtype", s.dtype))
 

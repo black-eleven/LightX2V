@@ -6,7 +6,7 @@ from lightx2v.utils.envs import *
 from lightx2v.utils.global_paras import CALIB
 from lightx2v.utils.quant_utils import FloatQuantizer, IntegerQuantizer
 from lightx2v.utils.registry_factory import MM_WEIGHT_REGISTER
-from lightx2v.utils.ggml_tensor import GGMLTensor
+from lightx2v.utils.ggml_tensor import GGMLTensor, dequantize_tensor as gguf_dequantize_tensor
 
 try:
     from lightx2v_kernel.gemm import (
@@ -994,14 +994,13 @@ class MMWeightWint8channelAint8channeldynamicSglActVllm(MMWeightQuantTemplate):
         return output_tensor
 
 
-class MMWeightGGUFTemplate(MMWeightQuantTemplate):
+class MMWeightGGUFTemplate(MMWeightTemplate):
     TORCH_COMPATIBLE_QTYPES = (None, gguf.GGMLQuantizationType.F32, gguf.GGMLQuantizationType.F16)
 
     def __init__(self, weight_name, bias_name, lazy_load=False, lazy_load_file=None):
         super().__init__(weight_name, bias_name, lazy_load, lazy_load_file)
-        self.load_func = self.load_gguf
 
-    def load_gguf(self, weight_dict):
+    def load(self, weight_dict):
         self.weight = weight_dict[self.weight_name]
 
         weight_shape = self.weight.shape
@@ -1011,14 +1010,43 @@ class MMWeightGGUFTemplate(MMWeightQuantTemplate):
         self.pin_weight.copy_from(self.weight)
         if self.bias_name is not None:
             self.bias = weight_dict[self.bias_name]
+            self.pin_bias = GGMLTensor.empty_pinned(self.bias.shape, dtype=self.bias.dtype)
+            self.pin_bias.copy_from(self.bias)
         else:
             self.bias = None
+
+    def get_weight(self, tensor, dtype):
+        if tensor is None:
+            return
+
+        device = tensor.device
+        weight = gguf_dequantize_tensor(tensor, dtype)
+        # prevent propagating custom tensor class
+        if isinstance(weight, GGMLTensor):
+            weight = torch.Tensor(weight)
+
+        return weight
+
+    @torch_compiler_disable()
+    def cast_bias_weight(self, input_tensor=None, dtype=None, device=None, bias_dtype=None):
+        if input_tensor is not None:
+            if dtype is None:
+                dtype = getattr(input_tensor, "dtype", torch.float32)
+
+        bias = None
+        if self.bias is not None:
+            bias = s.get_weight(self.bias, dtype)
+
+        weight = s.get_weight(self.weight, dtype)
+        return weight, bias
 
     def apply(self, input_tensor):
         print(self.weight)
         print(self.bias)
         print(input_tensor)
-        return input_tensor
+        weight, bias = self.cast_bias_weight(input_tensor)
+        print(weight, bias)
+        return torch.nn.functional.linear(input_tensor, weight, bias)
 
 
     def dequantize_func(self, input_tensor):
