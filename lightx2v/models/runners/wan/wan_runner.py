@@ -108,7 +108,7 @@ class WanRunner(DefaultRunner):
         if t5_quantized:
             t5_quant_scheme = self.config.get("t5_quant_scheme", None)
             assert t5_quant_scheme is not None
-            # TODO 
+            # TODO
             if "gguf" in t5_quant_scheme:
                 tmp_t5_quant_scheme = t5_quant_scheme.split("-")[1]
                 t5_model_name = f"models_t5_umt5-xxl-enc-{tmp_t5_quant_scheme}.gguf"

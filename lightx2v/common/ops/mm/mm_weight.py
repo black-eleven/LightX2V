@@ -3,10 +3,11 @@ from abc import ABCMeta, abstractmethod
 import torch
 
 from lightx2v.utils.envs import *
+from lightx2v.utils.ggml_tensor import GGMLTensor
+from lightx2v.utils.ggml_tensor import dequantize_tensor as gguf_dequantize_tensor
 from lightx2v.utils.global_paras import CALIB
 from lightx2v.utils.quant_utils import FloatQuantizer, IntegerQuantizer
 from lightx2v.utils.registry_factory import MM_WEIGHT_REGISTER
-from lightx2v.utils.ggml_tensor import GGMLTensor, dequantize_tensor as gguf_dequantize_tensor
 
 try:
     from lightx2v_kernel.gemm import (
@@ -1006,11 +1007,11 @@ class MMWeightGGUFTemplate(MMWeightTemplate):
         weight_shape = self.weight.shape
         weight_dtype = self.weight.dtype
 
-        self.pin_weight = GGMLTensor.empty_pinned(weight_shape, dtype=weight_dtype)
+        self.pin_weight = GGMLTensor.empty_pinned(weight_shape, orig_shape=self.weight.orig_shape, dtype=weight_dtype, gguf_type=self.weight.gguf_type)
         self.pin_weight.copy_from(self.weight)
         if self.bias_name is not None:
             self.bias = weight_dict[self.bias_name]
-            self.pin_bias = GGMLTensor.empty_pinned(self.bias.shape, dtype=self.bias.dtype)
+            self.pin_bias = GGMLTensor.empty_pinned(self.bias.shape, orig_shape=self.bias.orig_shape, dtype=self.bias.dtype, gguf_type=self.bias.gguf_type)
             self.pin_bias.copy_from(self.bias)
         else:
             self.bias = None
@@ -1027,7 +1028,6 @@ class MMWeightGGUFTemplate(MMWeightTemplate):
 
         return weight
 
-    @torch_compiler_disable()
     def cast_bias_weight(self, input_tensor=None, dtype=None, device=None, bias_dtype=None):
         if input_tensor is not None:
             if dtype is None:
@@ -1035,9 +1035,9 @@ class MMWeightGGUFTemplate(MMWeightTemplate):
 
         bias = None
         if self.bias is not None:
-            bias = s.get_weight(self.bias, dtype)
+            bias = self.get_weight(self.bias, dtype)
 
-        weight = s.get_weight(self.weight, dtype)
+        weight = self.get_weight(self.weight, dtype)
         return weight, bias
 
     def apply(self, input_tensor):
@@ -1047,7 +1047,6 @@ class MMWeightGGUFTemplate(MMWeightTemplate):
         weight, bias = self.cast_bias_weight(input_tensor)
         print(weight, bias)
         return torch.nn.functional.linear(input_tensor, weight, bias)
-
 
     def dequantize_func(self, input_tensor):
         # TODO: implement dequantize_func
@@ -1089,6 +1088,7 @@ class MMWeightGGUFBF16(MMWeightGGUFTemplate):
 @MM_WEIGHT_REGISTER("gguf-Q4_K")
 class MMWeightGGUFQ4K(MMWeightGGUFTemplate):
     qtype = gguf.GGMLQuantizationType.Q4_K
+
     def __init__(self, weight_name, bias_name, lazy_load=False, lazy_load_file=None):
         super().__init__(weight_name, bias_name, lazy_load, lazy_load_file)
 
@@ -1096,8 +1096,10 @@ class MMWeightGGUFQ4K(MMWeightGGUFTemplate):
 @MM_WEIGHT_REGISTER("gguf-Q4_K_S")
 class MMWeightGGUFQ4KS(MMWeightGGUFTemplate):
     qtype = gguf.GGMLQuantizationType.Q4_K
+
     def __init__(self, weight_name, bias_name, lazy_load=False, lazy_load_file=None):
         super().__init__(weight_name, bias_name, lazy_load, lazy_load_file)
+
 
 @MM_WEIGHT_REGISTER("gguf-Q4_1")
 class MMWeightGGUFQ41(MMWeightGGUFTemplate):

@@ -32,8 +32,8 @@ from lightx2v.models.networks.wan.weights.transformer_weights import (
 )
 from lightx2v.utils.custom_compiler import CompiledMethodsMixin, compiled_method
 from lightx2v.utils.envs import *
-from lightx2v.utils.utils import *
 from lightx2v.utils.ggml_tensor import load_gguf_sd_ckpt
+from lightx2v.utils.utils import *
 
 
 class WanModel(CompiledMethodsMixin):
@@ -240,7 +240,6 @@ class WanModel(CompiledMethodsMixin):
         state_dict = load_gguf_sd_ckpt(gguf_path, to_device=self.device)
         return state_dict
 
-
     def _init_weights(self, weight_dict=None):
         unified_dtype = GET_DTYPE() == GET_SENSITIVE_DTYPE()
         # Some layers run with float32 to achieve high accuracy
@@ -269,7 +268,6 @@ class WanModel(CompiledMethodsMixin):
                         weight_dict = self._load_quant_ckpt(unified_dtype, sensitive_layer)
                     else:
                         weight_dict = self._load_quant_split_ckpt(unified_dtype, sensitive_layer)
-
 
             if self.config.get("device_mesh") is not None and self.config.get("load_from_rank0", False):
                 weight_dict = self._load_weights_from_rank0(weight_dict, is_weight_loader)

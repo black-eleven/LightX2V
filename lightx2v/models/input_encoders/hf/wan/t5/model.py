@@ -798,7 +798,6 @@ class T5EncoderModel:
             load_from_rank0=load_from_rank0,
         )
 
-
         if cpu_offload:
             block_weights_dict = split_block_weights(weights_dict)
             model.blocks_weights.load(block_weights_dict)

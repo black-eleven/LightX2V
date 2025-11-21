@@ -342,4 +342,3 @@ class GGUFQuantLinearQ4KS(nn.Module):
         # self.weight_scale = maybe_cast(self.weight_scale)
         self.bias = maybe_cast(self.bias)
         return self
-
