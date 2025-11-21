@@ -186,8 +186,8 @@ class GGMLTensor(torch.Tensor):
         return self
 
     @classmethod
-    def from_torch(cls, tensor: torch.Tensor, tensor_type: gguf.GGMLQuantizationType, tensor_shape: Tuple[int, ...], aligned: bool = True, pin_memory: bool = False) -> "GGMLTensor":
-        return cls(tensor, gguf_type=tensor_type, shape=tensor_shape, dtype=tensor.dtype, aligned=aligned, pin_memory=pin_memory)
+    def from_torch(cls, tensor: torch.Tensor, tensor_type: gguf.GGMLQuantizationType, orig_shape: Tuple[int, ...], aligned: bool = True, pin_memory: bool = False) -> "GGMLTensor":
+        return cls(tensor, gguf_type=tensor_type, orig_shape=orig_shape, dtype=tensor.dtype, aligned=aligned, pin_memory=pin_memory)
 
     def to_torch(self) -> torch.Tensor:
         return torch.as_tensor(self)
@@ -379,8 +379,8 @@ def get_model_architecture(reader) -> str:
 
 
 def dequantize_tensor(tensor, dtype=None):
-    qtype = getattr(tensor, "tensor_type", None)
-    oshape = getattr(tensor, "tensor_shape", tensor.shape)
+    qtype = getattr(tensor, "gguf_type", None)
+    oshape = getattr(tensor, "orig_shape", tensor.shape)
 
     if qtype in TORCH_COMPATIBLE_QTYPES:
         return tensor.to(dtype)

@@ -1007,7 +1007,7 @@ class MMWeightGGUFTemplate(MMWeightTemplate):
         weight_shape = self.weight.shape
         weight_dtype = self.weight.dtype
 
-        if isinstance(self.bias, GGMLTensor):
+        if isinstance(self.weight, GGMLTensor):
             self.pin_weight = GGMLTensor.empty_pinned(weight_shape, orig_shape=self.weight.orig_shape, dtype=weight_dtype, gguf_type=self.weight.gguf_type)
             self.pin_weight.copy_from(self.weight)
         else:
