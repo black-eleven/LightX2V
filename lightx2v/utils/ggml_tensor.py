@@ -360,7 +360,7 @@ def get_field(reader, field_name, field_type):
     field = reader.get_field(field_name)
     if field is None:
         return None
-    elif field_type == str:
+    elif isinstance(field_type, str):
         # extra check here as this is used for checking arch string
         if len(field.types) != 1 or field.types[0] != gguf.GGUFValueType.STRING:
             raise TypeError(f"Bad type for GGUF {field_name} key: expected string, got {field.types!r}")
