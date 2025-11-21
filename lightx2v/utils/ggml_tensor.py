@@ -495,14 +495,17 @@ def load_gguf_sd_ckpt(gguf_path, return_arch=False, to_device: Optional[Union[in
         if shape is None:
             shape = torch.Size(tuple(int(v) for v in reversed(tensor.shape)))
 
-        # 创建GGMLTensor并添加到state_dict
-        state_dict[tensor.name] = GGMLTensor(
-            data=torch_tensor,
-            gtype=tensor.tensor_type,
-            shape=shape,
-            aligned=True,  # 启用内存对齐
-            pin_memory=False  # 根据需求调整
-        ).to(to_device)
+        if tensor.tensor_type in TORCH_COMPATIBLE_QTYPES:
+            state_dict[tensor.name] = torch_tensor.to(to_device)
+        else:
+            # 创建GGMLTensor并添加到state_dict
+            state_dict[tensor.name] = GGMLTensor(
+                data=torch_tensor,
+                gtype=tensor.tensor_type,
+                shape=shape,
+                aligned=True,  # 启用内存对齐
+                pin_memory=False  # 根据需求调整
+            ).to(to_device)
 
         # 统计加载的张量类型
         tensor_type_str = getattr(tensor.tensor_type, "name", repr(tensor.tensor_type))
