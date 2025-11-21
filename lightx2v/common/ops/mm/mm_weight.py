@@ -1007,12 +1007,22 @@ class MMWeightGGUFTemplate(MMWeightTemplate):
         weight_shape = self.weight.shape
         weight_dtype = self.weight.dtype
 
-        self.pin_weight = GGMLTensor.empty_pinned(weight_shape, orig_shape=self.weight.orig_shape, dtype=weight_dtype, gguf_type=self.weight.gguf_type)
-        self.pin_weight.copy_from(self.weight)
+        if isinstance(self.bias, GGMLTensor):
+            self.pin_weight = GGMLTensor.empty_pinned(weight_shape, orig_shape=self.weight.orig_shape, dtype=weight_dtype, gguf_type=self.weight.gguf_type)
+            self.pin_weight.copy_from(self.weight)
+        else:
+            self.pin_weight = torch.empty(weight_shape, pin_memory=True, dtype=weight_dtype)
+            self.pin_weight.copy_(weight_dict[self.weight_name])
+
         if self.bias_name is not None:
             self.bias = weight_dict[self.bias_name]
-            self.pin_bias = GGMLTensor.empty_pinned(self.bias.shape, orig_shape=self.bias.orig_shape, dtype=self.bias.dtype, gguf_type=self.bias.gguf_type)
-            self.pin_bias.copy_from(self.bias)
+            if isinstance(self.bias, GGMLTensor):
+                self.pin_bias = GGMLTensor.empty_pinned(self.bias.shape, orig_shape=self.bias.orig_shape, dtype=self.bias.dtype, gguf_type=self.bias.gguf_type)
+                self.pin_bias.copy_from(self.bias)
+            else:
+                self.pin_bias = torch.empty(self.bias.shape, pin_memory=True, dtype=self.bias.dtype)
+                self.pin_bias.copy_(weight_dict[self.bias_name])
+                pass
         else:
             self.bias = None
 
