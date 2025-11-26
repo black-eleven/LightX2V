@@ -1053,12 +1053,18 @@ class MMWeightGGUFTemplate(MMWeightTemplate):
         if self.bias is not None:
             bias = self.get_weight(self.bias, dtype)
 
-        weight = self.get_weight(self.weight, dtype)
+        weight = self.get_weight(self.weight, dtype).t()
         return weight, bias
 
     def apply(self, input_tensor):
-        weight, bias = self.cast_bias_weight(input_tensor)
-        return torch.nn.functional.linear(input_tensor, weight, bias)
+        weight, bias = self.cast_bia_weight(input_tensor)
+        shape = (input_tensor.shape[0], weight.shape[1])
+        dtype = input_tensor.dtype
+        device = input_tensor.device
+        output_tensor = torch.empty(shape, dtype=dtype, device=device, requires_grad=False)
+        if bias is None:
+            return torch.mm(input_tensor, weight, out=output_tensor)
+        return torch.addmm(bias, input_tensor, weight, out=output_tensor)
 
 
 @MM_WEIGHT_REGISTER("gguf-BF16")

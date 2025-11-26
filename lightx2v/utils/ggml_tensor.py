@@ -119,6 +119,7 @@ class GGMLTensor:
 
     def t(self):
         self.data = self.data.t()
+        self._orig_shape = torch.Size(reversed(self._orig_shape))
         return self
 
     def _make_aligned(self, alignment: int = 32):
