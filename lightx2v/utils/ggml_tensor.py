@@ -1,3 +1,4 @@
+import re
 from typing import Optional, Tuple, Union
 
 import gguf
@@ -212,7 +213,7 @@ class GGMLTensor:
         return self
 
 
-def load_gguf_sd_ckpt(gguf_path, return_arch=False, to_device: Optional[Union[int, torch.device]] = None):
+def load_gguf_ckpt(gguf_path, return_arch=False, to_device: Optional[Union[int, torch.device]] = None):
     import warnings
 
     logger.info(f"Loading gguf-quant dit model from {gguf_path}")
@@ -248,6 +249,53 @@ def load_gguf_sd_ckpt(gguf_path, return_arch=False, to_device: Optional[Union[in
     return state_dict
 
 
+def load_gguf_sd_ckpt(gguf_path, to_device: Optional[Union[int, torch.device]] = None):
+    state_dict = load_gguf_ckpt(gguf_path, to_device=to_device)
+    return state_dict
+
+
+def rename_ckpt_keys(state_dict, pattern_mapping):
+    renamed_count = 0
+    new_state_dict = {}
+    for key, value in state_dict.items():
+        new_key = key
+        for old_pattern, new_pattern in pattern_mapping:
+            # 使用正则表达式替换
+            if re.search(old_pattern, new_key):
+                new_key = re.sub(old_pattern, new_pattern, new_key)
+                renamed_count += 1
+
+        new_state_dict[new_key] = value
+
+    return new_state_dict
+
+
+T5_PATTERN_MAPPING = [
+    (r'^enc\.', ''),
+    (r'^blk\.', 'blocks.'),
+    (r'token_embd', 'token_embedding'),
+    (r'output_norm', 'norm'),
+    (r'\.attn_q\.', '.attn.q.'),
+    (r'\.attn_k\.', '.attn.k.'),
+    (r'\.attn_v\.', '.attn.v.'),
+    (r'\.attn_norm\.', '.norm1.'),
+    (r'\.attn_o\.', '.attn.o.'),
+    (r'\.attn_rel_b\.', '.pos_embedding.embedding.'),
+    (r'\.ffn_up\.', '.ffn.fc1.'),
+    (r'\.ffn_down\.', '.ffn.fc2.'),
+    (r'\.ffn_gate\.', '.ffn.gate.0.'),
+    (r'\.ffn_norm\.', '.norm2.'),
+]
+
+
+def load_gguf_t5_ckpt(gguf_path, to_device: Optional[Union[int, torch.device]] = None):
+    state_dict, arch = load_gguf_ckpt(gguf_path, return_arch=True, to_device=to_device)
+    assert arch in {"t5", "t5encoder"}, "ckpt arch not t5"
+
+    new_state_dict = rename_ckpt_keys(state_dict, T5_PATTERN_MAPPING)
+    return new_state_dict
+
+
 def get_orig_shape(reader, tensor_name: str) -> Optional[Tuple[int, ...]]:
     # TODO 这里正式上线的时候，需要更换
     field_key = f"comfy.gguf.orig_shape.{tensor_name}"
@@ -264,8 +312,7 @@ def get_field(reader, field_name, field_type):
     field = reader.get_field(field_name)
     if field is None:
         return None
-    elif isinstance(field_type, str):
-        # extra check here as this is used for checking arch string
+    elif field_type in [str]:
         if len(field.types) != 1 or field.types[0] != gguf.GGUFValueType.STRING:
             raise TypeError(f"Bad type for GGUF {field_name} key: expected string, got {field.types!r}")
         return str(field.parts[field.data[-1]], encoding="utf-8")
@@ -530,9 +577,7 @@ dequantize_functions = {
 
 
 if __name__ == "__main__":
-    sd = load_gguf_sd_ckpt("/home/SENSETIME/yihuiwen/yihuiwen/workspace/models/city96/Wan2.1-I2V-14B-720P-gguf/wan2.1-i2v-14b-720p-Q4_K_S.gguf", return_arch=False)
+    sd = load_gguf_t5_ckpt("/home/SENSETIME/yihuiwen/yihuiwen/workspace/models/city96/Wan2.1-I2V-14B-720P-gguf/models_t5_umt5-xxl-enc-Q4_K_S.gguf")
 
     for k, s in sd.items():
         print(k)
-        if isinstance(s, GGMLTensor):
-            dequantize_tensor(s, torch.float32)

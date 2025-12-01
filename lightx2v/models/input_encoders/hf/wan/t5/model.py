@@ -25,6 +25,7 @@ from lightx2v.models.input_encoders.hf.q_linear import (  # noqa E402
     TorchaoQuantLinearInt8,  # noqa E402
     VllmQuantLinearInt8,  # noqa E402,
     MluQuantLinearInt8,
+    GGUFQuantLinear,
 )
 from lightx2v.models.input_encoders.hf.wan.t5.tokenizer import HuggingfaceTokenizer  # noqa E402
 from lightx2v.utils.envs import *  # noqa E402
@@ -202,6 +203,8 @@ class T5Attention(nn.Module):
                 linear_cls = Q8FQuantLinearFp8
             elif quant_scheme == "int8-tmo":
                 linear_cls = MluQuantLinearInt8
+            elif quant_scheme == "gguf-Q4_K_S":
+                linear_cls = GGUFQuantLinear
             else:
                 NotImplementedError(f"Unsupported T5 quant scheme: {quant_scheme}")
         else:

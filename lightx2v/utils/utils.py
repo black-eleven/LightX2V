@@ -12,6 +12,7 @@ import torch.distributed as dist
 import torchvision
 from einops import rearrange
 from loguru import logger
+from lightx2v.utils.ggml_tensor import load_gguf_t5_ckpt
 
 
 def seed_all(seed):
@@ -374,6 +375,8 @@ def load_pt_safetensors(in_path, remove_key=None, include_keys=None):
                     keys_to_keep.append(key)
         # 只保留符合条件的key
         state_dict = {k: state_dict[k] for k in keys_to_keep}
+    elif ext == ".gguf":
+        state_dict = load_gguf_t5_ckpt(in_path, to_device="cpu")
     else:
         state_dict = load_safetensors(in_path, remove_key, include_keys)
     return state_dict

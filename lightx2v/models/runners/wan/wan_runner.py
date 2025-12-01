@@ -109,8 +109,12 @@ class WanRunner(DefaultRunner):
         if t5_quantized:
             t5_quant_scheme = self.config.get("t5_quant_scheme", None)
             assert t5_quant_scheme is not None
-            tmp_t5_quant_scheme = t5_quant_scheme.split("-")[0]
-            t5_model_name = f"models_t5_umt5-xxl-enc-{tmp_t5_quant_scheme}.pth"
+            if "gguf-" in t5_quant_scheme:
+                tmp_t5_quant_scheme = t5_quant_scheme.replace("gguf-", "")
+                t5_model_name = f"models_t5_umt5-xxl-enc-{tmp_t5_quant_scheme}.gguf"
+            else:
+                tmp_t5_quant_scheme = t5_quant_scheme.split("-")[0]
+                t5_model_name = f"models_t5_umt5-xxl-enc-{tmp_t5_quant_scheme}.pth"
             t5_quantized_ckpt = find_torch_model_path(self.config, "t5_quantized_ckpt", t5_model_name)
             t5_original_ckpt = None
         else:

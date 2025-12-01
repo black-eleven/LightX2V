@@ -193,7 +193,7 @@ class WanModel(CompiledMethodsMixin):
             gguf_path = ""
             if os.path.isdir(safetensors_path):
                 gguf_type = self.config.get("dit_quant_scheme").replace("gguf-", "")
-                gguf_files = list(filter(lambda x: gguf_type in x, glob.glob(os.path.join(safetensors_path, "*.gguf"))))
+                gguf_files = list(filter(lambda x: gguf_type in x and "umt5-xxl-enc" not in x, glob.glob(os.path.join(safetensors_path, "*.gguf"))))
                 gguf_path = gguf_files[0]
             else:
                 gguf_path = safetensors_path
