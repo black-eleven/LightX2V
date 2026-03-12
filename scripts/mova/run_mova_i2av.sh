@@ -11,7 +11,7 @@ export CUDA_VISIBLE_DEVICES=0
 source ${lightx2v_path}/scripts/base/base.sh
 
 python -m lightx2v.infer \
---model_cls ltx2 \
+--model_cls mova \
 --task i2av \
 --image_path "${lightx2v_path}/assets/inputs/imgs/woman.jpeg" \
 --model_path $model_path \

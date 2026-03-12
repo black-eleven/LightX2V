@@ -1,4 +1,5 @@
 import gc
+import json
 import os
 from typing import Optional, Union, List, Tuple
 
@@ -8,8 +9,8 @@ import torch
 from lightx2v.models.networks.wan.model import WanModel
 from lightx2v.models.runners.default_runner import DefaultRunner
 from lightx2v.models.runners.wan.wan_runner import MultiModelStruct, build_wan_model_with_lora
-from lightx2v.models.schedulers.mova.scheduler import FlowMatchPairScheduler
-from lightx2v.models.video_encoders.hf.mova.audio_vae.audio_vae import DacVAE
+from lightx2v.models.schedulers.mova.scheduler import MovaPairScheduler
+# from lightx2v.models.video_encoders.hf.mova.audio_vae.audio_vae import DacVAE
 from lightx2v.models.video_encoders.hf.wan.vae import WanVAE
 from lightx2v.utils.envs import GET_DTYPE
 from lightx2v.utils.profiler import ProfilingContext4DebugL2
@@ -24,13 +25,14 @@ torch_device_module = getattr(torch, AI_DEVICE)
 class MovaRunner(DefaultRunner):
     def __init__(self, config):
         super().__init__(config)
+        self.scheduler = None
         self.video_vae = None
         self.audio_vae = None
         self.vae_cls = WanVAE
-        self.audio_vae_cls = DacVAE
+        # self.audio_vae_cls = DacVAE
 
     def init_scheduler(self):
-        self.scheduler = FlowMatchPairScheduler(self.config)
+        self.scheduler = MovaPairScheduler(self.config)
 
     @ProfilingContext4DebugL2("Load models")
     def load_model(self):
@@ -113,7 +115,8 @@ class MovaRunner(DefaultRunner):
 
         vae_path = os.path.join(self.config["model_path"], "audio_vae")
         # audio_vae_config
-        audio_vae = self.audio_vae_cls()
+        # audio_vae = self.audio_vae_cls()
+        audio_vae = None
 
         return video_vae, audio_vae
 
@@ -152,7 +155,7 @@ class MovaRunner(DefaultRunner):
 
     def prepare_latents(
         self,
-        image: PipelineImageInput,
+        image,
         batch_size: int,
         num_channels_latents: int = 16,
         height: int = 480,

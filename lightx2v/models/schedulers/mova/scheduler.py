@@ -1,10 +1,13 @@
+import json
 import math
+import os
+
 import torch
 
 from lightx2v.models.schedulers.scheduler import BaseScheduler
 
 
-class FlowMatchScheduler(BaseScheduler):
+class FlowMatchScheduler:
     def __init__(self, config):
         super().__init__(config)
 
@@ -79,9 +82,10 @@ class FlowMatchScheduler(BaseScheduler):
         return mu
 
 
-class FlowMatchPairScheduler(BaseScheduler):
+class FlowMatchPairScheduler(FlowMatchScheduler):
 
     def __init__(self, config):
+        super().__init__(config)
         self.config = config
         self._pair_postprocess_fn = None
         self._pair_postprocess_requires_source = False
@@ -89,7 +93,6 @@ class FlowMatchPairScheduler(BaseScheduler):
         self.pair_sigmas: torch.Tensor | None = None
         self.timesteps: torch.Tensor | None = None
         self.sigmas: torch.Tensor | None = None
-        super().__init__(self, config)
 
     def set_pair_postprocess(self, fn):
         if fn is not None and not callable(fn):
@@ -250,3 +253,12 @@ class FlowMatchPairScheduler(BaseScheduler):
 
         self.pair_timesteps = _apply_postprocess(base_pairs_timesteps, "timesteps")
         self.pair_sigmas = _apply_postprocess(base_pairs_sigmas, "sigmas")
+
+
+class MovaPairScheduler(BaseScheduler):
+    def __init__(self, config):
+        super().__init__(config)
+        scheduler_config_path = os.path.join(self.config["model_path"], "scheduler", "scheduler_config.json")
+        with open(scheduler_config_path, "r") as f:
+            self.scheduler_config = json.load(f)
+        self.scheduler = FlowMatchPairScheduler(self.scheduler_config)
