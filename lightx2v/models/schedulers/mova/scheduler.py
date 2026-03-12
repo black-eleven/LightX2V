@@ -9,8 +9,6 @@ from lightx2v.models.schedulers.scheduler import BaseScheduler
 
 class FlowMatchScheduler:
     def __init__(self, config):
-        super().__init__(config)
-
         self.num_train_timesteps = config["num_train_timesteps"]
         self.num_inference_steps = config["num_inference_steps"]
         self.shift = config["shift"]
@@ -85,7 +83,6 @@ class FlowMatchScheduler:
 class FlowMatchPairScheduler(FlowMatchScheduler):
 
     def __init__(self, config):
-        super().__init__(config)
         self.config = config
         self._pair_postprocess_fn = None
         self._pair_postprocess_requires_source = False
@@ -93,6 +90,8 @@ class FlowMatchPairScheduler(FlowMatchScheduler):
         self.pair_sigmas: torch.Tensor | None = None
         self.timesteps: torch.Tensor | None = None
         self.sigmas: torch.Tensor | None = None
+
+        super().__init__(config)
 
     def set_pair_postprocess(self, fn):
         if fn is not None and not callable(fn):

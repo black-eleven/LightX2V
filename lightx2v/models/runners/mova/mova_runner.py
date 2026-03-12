@@ -98,7 +98,7 @@ class MovaRunner(DefaultRunner):
         else:
             vae_device = torch.device(AI_DEVICE)
 
-        vae_path = os.path.join(self.config["model_path"], "video_vae")
+        vae_path = os.path.join(self.config["model_path"], "video_vae.pth")
 
         vae_config = {
             "vae_path": vae_path,
