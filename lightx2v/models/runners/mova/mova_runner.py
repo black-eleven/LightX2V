@@ -10,7 +10,7 @@ from lightx2v.models.networks.wan.model import WanModel
 from lightx2v.models.runners.default_runner import DefaultRunner
 from lightx2v.models.runners.wan.wan_runner import MultiModelStruct, build_wan_model_with_lora
 from lightx2v.models.schedulers.mova.scheduler import MovaPairScheduler
-# from lightx2v.models.video_encoders.hf.mova.audio_vae.audio_vae import DacVAE
+from lightx2v.models.video_encoders.hf.mova.audio_vae.audio_vae import DacVAE
 from lightx2v.models.video_encoders.hf.wan.vae import WanVAE
 from lightx2v.utils.envs import GET_DTYPE
 from lightx2v.utils.profiler import ProfilingContext4DebugL2
@@ -25,11 +25,11 @@ torch_device_module = getattr(torch, AI_DEVICE)
 class MovaRunner(DefaultRunner):
     def __init__(self, config):
         super().__init__(config)
-        self.scheduler = None
-        self.video_vae = None
-        self.audio_vae = None
         self.vae_cls = WanVAE
-        # self.audio_vae_cls = DacVAE
+        self.audio_vae_cls = DacVAE
+
+        self.high_noise_model_path = os.path.join(config["model_path"], "video_dit.safetensors")
+        self.low_noise_model_path = os.path.join(config["model_path"], "video_dit_2.safetensors")
 
     def init_scheduler(self):
         self.scheduler = MovaPairScheduler(self.config)
@@ -46,20 +46,19 @@ class MovaRunner(DefaultRunner):
 
     def load_transformer(self):
         # TODO 需要适配成 MOVA 模型, video_dit & video_dit_2 & audio_dit
-        # encoder -> high_noise_model -> low_noise_model -> vae -> video_output
         if not self.config.get("lazy_load", False) and not self.config.get("unload_modules", False):
             lora_configs = self.config.get("lora_configs")
             high_model_kwargs = {
                 "model_path": self.high_noise_model_path,
                 "config": self.config,
                 "device": self.init_device,
-                "model_type": "wan2.2_moe_high_noise",
+                "model_type": "wan2.1",
             }
             low_model_kwargs = {
                 "model_path": self.low_noise_model_path,
                 "config": self.config,
                 "device": self.init_device,
-                "model_type": "wan2.2_moe_low_noise",
+                "model_type": "wan2.1",
             }
             if not lora_configs:
                 high_noise_model = WanModel(**high_model_kwargs)
@@ -114,9 +113,7 @@ class MovaRunner(DefaultRunner):
         video_vae = self.vae_cls(**vae_config)
 
         vae_path = os.path.join(self.config["model_path"], "audio_vae")
-        # audio_vae_config
-        # audio_vae = self.audio_vae_cls()
-        audio_vae = None
+        audio_vae = self.audio_vae_cls()
 
         return video_vae, audio_vae
 
@@ -124,12 +121,11 @@ class MovaRunner(DefaultRunner):
         target_height = self.input_info.target_shape[0] if self.input_info.target_shape and len(self.input_info.target_shape) == 2 else self.config["target_height"]
         target_width = self.input_info.target_shape[1] if self.input_info.target_shape and len(self.input_info.target_shape) == 2 else self.config["target_width"]
 
-        # TODO 需要对齐当前WanVAE的实现
         video_latent_shape = [
-            self.config.video_vae.config.get("z_dim", 16),
-            (self.config["target_video_length"] - 1) // self.config.video_vae.config["scale_factor_temporal"] + 1,
-            int(target_height) // self.config.video_vae.config["scale_factor_spatial"],
-            int(target_width) // self.config.video_vae.config["scale_factor_spatial"],
+            self.config.get("num_channels_latents", 16),
+            (self.config["target_video_length"] - 1) // self.config["vae_stride"][0] + 1,
+            int(target_height) // self.config["vae_stride"][1],
+            int(target_width) // self.config["vae_stride"][2],
         ]
 
         audio_sample_rate = self.audio_vae.config["sample_rate"]

@@ -4,5 +4,9 @@
     "target_height": 512,
     "target_width": 768,
     "num_channels_latents": 128,
-    "fps": 24
+    "fps": 24,
+    "self_attn_1_type": "flash_attn3",
+    "cross_attn_1_type": "flash_attn3",
+    "cross_attn_2_type": "flash_attn3",
+    "boundary": 0.900
 }

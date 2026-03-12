@@ -11,16 +11,107 @@ from typing import List, Union
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 import tqdm
-from audiotools import AudioSignal
-from audiotools.ml import BaseModel
-from diffusers.configuration_utils import ConfigMixin, register_to_config
-from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils.accelerate_utils import apply_forward_hook
 from torch import nn
 from torch.nn.utils import weight_norm
 
 SUPPORTED_VERSIONS = ["1.0.0"]
+
+
+class AudioSignal:
+    """A lightweight audio container used by this module."""
+
+    def __init__(self, audio_data: torch.Tensor, sample_rate: int):
+        if audio_data.ndim == 2:
+            audio_data = audio_data.unsqueeze(0)
+        if audio_data.ndim != 3:
+            raise ValueError(f"audio_data must be [B, C, T], got shape {audio_data.shape}")
+        self.audio_data = audio_data
+        self.sample_rate = int(sample_rate)
+
+    @property
+    def device(self) -> torch.device:
+        return self.audio_data.device
+
+    @property
+    def shape(self):
+        return self.audio_data.shape
+
+    @property
+    def signal_length(self) -> int:
+        return int(self.audio_data.shape[-1])
+
+    @property
+    def signal_duration(self) -> float:
+        return float(self.signal_length / self.sample_rate)
+
+    @classmethod
+    def load_from_file_with_ffmpeg(cls, path: str) -> "AudioSignal":
+        try:
+            import torchaudio
+        except ImportError as e:
+            raise ImportError(
+                "Loading audio from file requires torchaudio when audiotools is not used."
+            ) from e
+
+        wav, sample_rate = torchaudio.load(path)
+        return cls(wav.unsqueeze(0), sample_rate)
+
+    def clone(self) -> "AudioSignal":
+        return AudioSignal(self.audio_data.clone(), self.sample_rate)
+
+    def to_mono(self) -> "AudioSignal":
+        if self.audio_data.shape[1] > 1:
+            self.audio_data = self.audio_data.mean(dim=1, keepdim=True)
+        return self
+
+    def resample(self, new_sample_rate: int) -> "AudioSignal":
+        new_sample_rate = int(new_sample_rate)
+        if new_sample_rate == self.sample_rate:
+            return self
+
+        old_len = self.audio_data.shape[-1]
+        new_len = max(1, int(round(old_len * new_sample_rate / self.sample_rate)))
+        self.audio_data = F.interpolate(
+            self.audio_data, size=new_len, mode="linear", align_corners=False
+        )
+        self.sample_rate = new_sample_rate
+        return self
+
+    def ffmpeg_resample(self, new_sample_rate: int) -> "AudioSignal":
+        return self.resample(new_sample_rate)
+
+    def loudness(self) -> torch.Tensor:
+        x = self.audio_data.float()
+        rms = torch.sqrt(torch.mean(x.pow(2), dim=(-1, -2), keepdim=False) + 1e-12)
+        return (20.0 * torch.log10(rms + 1e-12)).mean().detach().cpu()
+
+    def ffmpeg_loudness(self) -> torch.Tensor:
+        return self.loudness()
+
+    def normalize(self, target_db: float) -> "AudioSignal":
+        cur_db = self.loudness().to(self.audio_data.device)
+        gain = torch.pow(
+            torch.tensor(10.0, device=self.audio_data.device),
+            (torch.tensor(float(target_db), device=self.audio_data.device) - cur_db) / 20.0,
+        )
+        self.audio_data = self.audio_data * gain
+        return self
+
+    def ensure_max_of_audio(self) -> "AudioSignal":
+        peak = self.audio_data.abs().amax()
+        if peak > 1.0:
+            self.audio_data = self.audio_data / (peak + 1e-12)
+        return self
+
+    def zero_pad(self, left: int, right: int) -> "AudioSignal":
+        self.audio_data = F.pad(self.audio_data, (int(left), int(right)))
+        return self
+
+    def __getitem__(self, item) -> "AudioSignal":
+        return AudioSignal(self.audio_data.__getitem__(item), self.sample_rate)
 
 
 @dataclass
@@ -339,7 +430,6 @@ class Snake1d(nn.Module):
         return snake(x, self.alpha)
 
 
-import torch.nn.functional as F
 from einops import rearrange
 
 
@@ -807,8 +897,7 @@ class Decoder(nn.Module):
         return self.model(x)
 
 
-class DacVAE(BaseModel, CodecMixin, ModelMixin, ConfigMixin):
-    # TODO 需要改造，
+class DacVAE(nn.Module, CodecMixin):
     def __init__(
         self,
         encoder_dim: int = 64,
@@ -1059,7 +1148,8 @@ class DacVAE(BaseModel, CodecMixin, ModelMixin, ConfigMixin):
         if num_removed > 0:
             print(f"Successfully removed weight_norm from {num_removed} modules")
             self.use_weight_norm = False
-            self.register_to_config(use_weight_norm=False)
+            if hasattr(self, "register_to_config"):
+                self.register_to_config(use_weight_norm=False)
         else:
             print("No weight_norm found in the model")
         return self
