@@ -1,0 +1,8 @@
+{
+    "infer_steps": 50,
+    "target_video_length": 81,
+    "target_height": 512,
+    "target_width": 768,
+    "num_channels_latents": 128,
+    "fps": 24
+}
