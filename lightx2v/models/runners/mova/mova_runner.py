@@ -112,8 +112,11 @@ class MovaRunner(DefaultRunner):
 
         video_vae = self.vae_cls(**vae_config)
 
-        vae_path = os.path.join(self.config["model_path"], "audio_vae")
-        audio_vae = self.audio_vae_cls()
+        audio_vae_path = os.path.join(self.config["model_path"], "audio_vae")
+        with open(os.path.join(audio_vae_path, "config.json"), "r") as f:
+            audio_vae_config = json.load(f)
+            self.audio_vae_config = audio_vae_config
+        audio_vae = self.audio_vae_cls(**audio_vae_config)
 
         return video_vae, audio_vae
 
@@ -128,12 +131,12 @@ class MovaRunner(DefaultRunner):
             int(target_width) // self.config["vae_stride"][2],
         ]
 
-        audio_sample_rate = self.audio_vae.config["sample_rate"]
+        audio_sample_rate = self.audio_vae_config["sample_rate"]
         audio_num_samples = int(audio_sample_rate * self.config["target_video_length"] / self.config["fps"])
 
-        audio_vae_scale_factor = int(np.prod(self.audio_vae.config["encoder_rates"]))
+        audio_vae_scale_factor = int(np.prod(self.audio_vae_config["encoder_rates"]))
         latent_t = (audio_num_samples - 1) // audio_vae_scale_factor + 1
-        audio_latent_shape = (self.config.get("audio_vae_latent_dim"), latent_t)
+        audio_latent_shape = (self.audio_vae_config("latent_dim"), latent_t)
 
         return video_latent_shape, audio_latent_shape
 
