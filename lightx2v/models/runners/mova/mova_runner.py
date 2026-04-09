@@ -4,6 +4,7 @@ import os
 import wave
 from copy import deepcopy
 from contextlib import nullcontext
+from types import SimpleNamespace
 
 
 import numpy as np
@@ -438,7 +439,6 @@ class MovaRunner(WanRunner):
         self.get_video_segment_num()
         self._bridge_prev_audio_layers = {}
         self._bridge_video_grid_size = None
-        self._warn_if_official_profile_mismatch()
 
         if self.config.get("lazy_load", False) or self.config.get("unload_modules", False):
             self.model, self.audio_model = self.load_transformer()
@@ -449,26 +449,6 @@ class MovaRunner(WanRunner):
         # and stored in self.video_denoise_mask and self.initial_video_latent
         self.scheduler.prepare(seed=self.input_info.seed, latent_shape=self.input_info.latent_shape,
                                audio_latent_shape=self.input_info.audio_latent_shape)
-
-    def _warn_if_official_profile_mismatch(self):
-        model_path = str(self.config.get("model_path", "")).lower()
-        is_360p = "360p" in model_path
-        is_720p = "720p" in model_path
-        if not is_360p and not is_720p:
-            return
-
-        expected_h, expected_w = (352, 640) if is_360p else (720, 1280)
-        expected_frames = 193
-        cur_h = int(self.config.get("target_height", -1))
-        cur_w = int(self.config.get("target_width", -1))
-        cur_frames = int(self.config.get("target_video_length", -1))
-        if cur_h != expected_h or cur_w != expected_w or cur_frames != expected_frames:
-            logger.warning(
-                "MOVA profile mismatch detected: "
-                f"expected {expected_h}x{expected_w}, {expected_frames} frames for {'360p' if is_360p else '720p'}, "
-                f"but got {cur_h}x{cur_w}, {cur_frames} frames. "
-                "This may introduce blocky or mosaic artifacts."
-            )
 
     @ProfilingContext4DebugL2("Run DiT")
     def run_main(self):
@@ -527,17 +507,6 @@ class MovaRunner(WanRunner):
 
                 with ProfilingContext4DebugL1("step_post"):
                     self.model.scheduler.step_post()
-
-                if step_index in (0, infer_steps // 2, infer_steps - 1):
-                    a_latent = self.audio_model.scheduler.latents
-                    a_noise = self.audio_model.scheduler.noise_pred
-                    logger.info(
-                        f"[AUDIO-DIAG step {step_index+1}/{infer_steps}] "
-                        f"latent min={a_latent.min().item():.4f} max={a_latent.max().item():.4f} "
-                        f"mean={a_latent.mean().item():.4f} std={a_latent.std().item():.4f} | "
-                        f"noise min={a_noise.min().item():.4f} max={a_noise.max().item():.4f} "
-                        f"mean={a_noise.mean().item():.4f} std={a_noise.std().item():.4f}"
-                    )
 
                 # Progress callback only for regular segments (not upsampler)
                 if self.progress_callback and segment_idx is not None:
@@ -750,28 +719,23 @@ class MovaRunner(WanRunner):
             audio = audio[:, :2]
         return audio.float().cpu()
 
-    def _save_pre_mux_wav(self, audio: torch.Tensor, sample_rate: int, output_path: str):
-        if audio is None or output_path is None:
-            return
-        wav_path = os.path.splitext(output_path)[0] + ".pre_mux.wav"
-        samples = audio
-        if samples.ndim == 1:
-            samples = samples.unsqueeze(1)
-        if samples.shape[1] == 1:
-            samples = samples.repeat(1, 2)
-        elif samples.shape[1] > 2:
-            samples = samples[:, :2]
-
-        peak = samples.abs().max()
-        if torch.isfinite(peak) and peak > 1.0:
-            samples = samples / (peak + 1e-8)
-        samples_i16 = (samples.clamp(-1.0, 1.0) * 32767.0).to(torch.int16).cpu().numpy()
-        with wave.open(wav_path, "wb") as wf:
-            wf.setnchannels(2)
-            wf.setsampwidth(2)
-            wf.setframerate(int(sample_rate))
-            wf.writeframes(samples_i16.tobytes(order="C"))
-        logger.info(f"Saved pre-mux audio wav to: {wav_path}")
+    def _save_video(self, video, fps, audio, output_path, video_chunks_number=1):
+        audio_for_save = None
+        if audio is not None:
+            if hasattr(audio, "waveform") and hasattr(audio, "sampling_rate"):
+                audio_for_save = audio
+            else:
+                audio_for_save = SimpleNamespace(
+                    waveform=audio,
+                    sampling_rate=int(self.audio_vae_config.get("sample_rate", self.config.get("audio_fps", 24000))),
+                )
+        save_video(
+            video=video,
+            fps=fps,
+            audio=audio_for_save,
+            output_path=output_path,
+            video_chunks_number=video_chunks_number,
+        )
 
     def end_run_segment(self, segment_idx=None):
         self.gen_video_final = self.gen_video
@@ -788,16 +752,10 @@ class MovaRunner(WanRunner):
         elif self.input_info.save_result_path is not None:
             if not dist.is_initialized() or dist.get_rank() == 0:
                 logger.info("🎬 Start to save video+audio 🎬")
-                self._save_pre_mux_wav(
-                    self.gen_audio_final,
-                    self.audio_vae_config.get("sample_rate", self.config.get("audio_fps", 24000)),
-                    self.input_info.save_result_path,
-                )
-                save_video(
+                self._save_video(
                     video=video_for_save,
                     fps=self.config.get("fps", 24),
                     audio=self.gen_audio_final,
-                    audio_sample_rate=self.audio_vae_config.get("sample_rate", self.config.get("audio_fps", 24000)),
                     output_path=self.input_info.save_result_path,
                     video_chunks_number=1,
                 )
