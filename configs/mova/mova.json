@@ -1,0 +1,23 @@
+{
+    "infer_steps": 25,
+    "target_video_length": 193,
+    "target_height": 352,
+    "target_width": 640,
+    "num_channels_latents": 16,
+    "fps": 24,
+    "self_attn_1_type": "flash_attn3",
+    "cross_attn_1_type": "flash_attn3",
+    "cross_attn_2_type": "flash_attn3",
+    "rope_type": "flashinfer",
+    "audio_rope_type": "torch",
+    "boundary": 0.900,
+    "visual_shift": 5.0,
+    "audio_shift": 5.0,
+    "mova_bridge_scale": 1.0,
+    "sample_guide_scale": [
+        5.0,
+        5.0
+    ],
+    "use_image_encoder": false,
+    "enable_cfg": true
+}

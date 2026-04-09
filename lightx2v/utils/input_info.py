@@ -242,6 +242,7 @@ class I2AVInputInfo:
     negative_prompt: str = field(default_factory=str)
     image_path: str = field(default_factory=str)
     image_strength: float = field(default_factory=float)
+    last_frame_path: str = field(default_factory=str)
     save_result_path: str = field(default_factory=str)
     return_result_tensor: bool = field(default_factory=lambda: False)
     # shape related

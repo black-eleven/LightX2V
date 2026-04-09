@@ -106,7 +106,7 @@ class WanPreInfer:
         else:
             context = inputs["text_encoder_output"]["context_null"]
 
-        if self.task in ["i2v", "flf2v", "animate", "s2v", "rs2v"]:
+        if self.task in ["i2v", "flf2v", "animate", "s2v", "rs2v", "i2av"]:
             if self.config.get("use_image_encoder", True):
                 clip_fea = inputs["image_encoder_output"]["clip_encoder_out"]
 

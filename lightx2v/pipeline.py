@@ -18,6 +18,7 @@ from lightx2v.models.runners.hunyuan_video.hunyuan_video_15_runner import Hunyua
 from lightx2v.models.runners.longcat_image.longcat_image_runner import LongCatImageRunner  # noqa: F401
 from lightx2v.models.runners.ltx2.ltx2_runner import LTX2Runner  # noqa: F401
 from lightx2v.models.runners.neopp.neopp_runner import NeoppRunner  # noqa: F401
+from lightx2v.models.runners.mova.mova_runner import MovaRunner  # noqa: F401
 from lightx2v.models.runners.qwen_image.qwen_image_runner import QwenImageRunner  # noqa: F401
 from lightx2v.models.runners.seedvr.seedvr_runner import SeedVRRunner  # noqa: F401
 from lightx2v.models.runners.wan.wan_animate_runner import WanAnimateRunner  # noqa: F401
@@ -100,9 +101,10 @@ class LightX2VPipeline:
             "wan2.2_audio",
             "wan2.2_moe_distill",
             "wan2.2_animate",
+            "mova",
         ]:
             self.vae_stride = (4, 8, 8)
-            if self.model_cls.startswith("wan2.2"):
+            if self.model_cls.startswith("wan2.2") or self.model_cls == "mova":
                 self.use_image_encoder = False
         elif self.model_cls in ["wan2.2"]:
             self.vae_stride = (4, 16, 16)
@@ -236,7 +238,7 @@ class LightX2VPipeline:
         self.denoising_step_list = denoising_step_list
         self.audio_fps = audio_fps
         self.double_precision_rope = double_precision_rope
-        if self.model_cls.startswith("wan"):
+        if self.model_cls.startswith("wan") or self.model_cls == "mova":
             self.self_attn_1_type = attn_mode
             self.cross_attn_1_type = attn_mode
             self.cross_attn_2_type = attn_mode
@@ -292,6 +294,10 @@ class LightX2VPipeline:
             self.clip_quant_scheme = quant_scheme
             self.clip_quantized = image_encoder_quantized
             self.clip_quantized_ckpt = image_encoder_quantized_ckpt
+        elif self.model_cls == "mova":
+            self.t5_quant_scheme = quant_scheme
+            self.t5_quantized = text_encoder_quantized
+            self.t5_quantized_ckpt = text_encoder_quantized_ckpt
         elif self.model_cls in ["hunyuan_video_1.5", "hunyuan_video_1.5_distill", "qwen_image"]:
             self.qwen25vl_quantized = text_encoder_quantized
             self.qwen25vl_quantized_ckpt = text_encoder_quantized_ckpt
@@ -327,6 +333,7 @@ class LightX2VPipeline:
             "wan2.2_audio",
             "wan2.2_moe_distill",
             "wan2.2_animate",
+            "mova",
         ]:
             self.t5_cpu_offload = text_encoder_offload
             self.clip_encoder_offload = image_encoder_offload
